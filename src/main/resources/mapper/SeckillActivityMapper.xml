@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.SeckillActivityMapper">
+    <!-- 4.7.7 终止活动：仅未删除的活动可终止，同步维护 updated_at；影响行数由 Service 校验 -->
+    <update id="stopSeckillById" parameterType="java.lang.Long">
+        update seckill_activity
+        set status = 2,
+            updated_at = NOW()
+        where id = #{id}
+          and deleted = 0
+    </update>
+
+    <!--
+        秒杀活动列表（3.6.5）：联查 product / product_sku 组装 VO。
+        状态按时间窗口与 NOW() 比较过滤，不依赖 status 字段（status 无定时任务自动流转）。
+        available_stock 不在此处取真实库存，实际剩余库存由 Service 层读 Redis 实时值。
+    -->
+    <select id="selectSeckillList" resultType="com.mall.vo.SeckillActivityVO">
+        SELECT
+            sa.id              AS id,
+            sa.activity_name   AS activityName,
+            sa.product_id      AS productId,
+            p.product_name     AS productName,
+            p.main_image       AS mainImage,
+            sa.sku_id          AS skuId,
+            sku.specs          AS specs,
+            sa.seckill_price   AS seckillPrice,
+            IFNULL(sku.price, sa.seckill_price) AS originalPrice,
+            sa.total_stock     AS totalStock,
+            sa.available_stock AS availableStock,
+            sa.per_limit       AS perLimit,
+            sa.start_time      AS startTime,
+            sa.end_time        AS endTime
+        FROM seckill_activity sa
+        LEFT JOIN product p     ON p.id = sa.product_id AND p.deleted = 0
+        LEFT JOIN product_sku sku ON sku.id = sa.sku_id AND sku.deleted = 0
+        WHERE sa.deleted = 0
+        <if test="status != null">
+            <choose>
+                <when test="status == 0">
+                    AND sa.start_time &gt; NOW()
+                </when>
+                <when test="status == 1">
+                    AND sa.start_time &lt;= NOW() AND sa.end_time &gt;= NOW()
+                </when>
+                <when test="status == 2">
+                    AND sa.end_time &lt; NOW()
+                </when>
+            </choose>
+        </if>
+        ORDER BY sa.start_time DESC
+    </select>
+    <select id="selectDetailById" resultType="com.mall.vo.SeckillActivityVO" parameterType="java.lang.Long">
+        SELECT
+            sa.id              AS id,
+            sa.activity_name   AS activityName,
+            sa.product_id      AS productId,
+            p.product_name     AS productName,
+            p.main_image       AS mainImage,
+            sa.sku_id          AS skuId,
+            sku.specs          AS specs,
+            sa.seckill_price   AS seckillPrice,
+            IFNULL(sku.price, sa.seckill_price) AS originalPrice,
+            sa.total_stock     AS totalStock,
+            sa.available_stock AS availableStock,
+            sa.per_limit       AS perLimit,
+            sa.start_time      AS startTime,
+            sa.end_time        AS endTime
+        FROM seckill_activity sa
+                 LEFT JOIN product p     ON p.id = sa.product_id AND p.deleted = 0
+                 LEFT JOIN product_sku sku ON sku.id = sa.sku_id AND sku.deleted = 0
+        WHERE sa.deleted = 0
+          AND sa.id = #{id}
+    </select>
+
+    <!-- 布隆过滤器预热数据源（SeckillBloomIndex.loadAllIds）：全部未删除活动 ID -->
+    <select id="selectAllIds" resultType="java.lang.Long">
+        SELECT id
+        FROM seckill_activity
+        WHERE deleted = 0
+    </select>
+    <select id="selectAdminList" resultType="com.mall.vo.SeckillAdminVO">
+        SELECT
+            sa.id              AS id,
+            sa.activity_name   AS activityName,
+            sa.product_id      AS productId,
+            p.product_name     AS productName,
+            p.main_image       AS mainImage,
+            sa.sku_id          AS skuId,
+            sku.specs          AS specs,
+            sa.seckill_price   AS seckillPrice,
+            IFNULL(sku.price, sa.seckill_price) AS originalPrice,
+            sa.total_stock     AS totalStock,
+            sa.available_stock AS availableStock,
+            sa.per_limit       AS perLimit,
+            sa.start_time      AS startTime,
+            sa.end_time        AS endTime,
+            sa.total_stock - sa.available_stock AS soldQuantity,
+            sa.created_at AS createdAt
+        FROM seckill_activity sa
+                 LEFT JOIN product p     ON p.id = sa.product_id AND p.deleted = 0
+                 LEFT JOIN product_sku sku ON sku.id = sa.sku_id AND sku.deleted = 0
+        WHERE sa.deleted = 0
+        ORDER BY sa.start_time DESC
+    </select>
+</mapper>

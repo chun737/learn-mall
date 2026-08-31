@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.ProductSkuMapper">
+    <!-- 人工调整库存：条件扣减，防负库存。影响行数 0 = 库存不足或 SKU 不存在 -->
+    <update id="adjustStock">
+        UPDATE product_sku
+        SET stock = stock + #{changeQty},
+            updated_at = NOW()
+        WHERE id = #{id}
+          AND deleted = 0
+          AND stock + #{changeQty} >= 0
+    </update>
+
+    <!-- 库存看板-概览统计 -->
+    <select id="selectStockSummary" resultType="com.mall.vo.StockDashboardVO$StockSummary">
+        SELECT
+            COUNT(*)                                  AS total_sku,
+            IFNULL(SUM(stock), 0)                     AS total_stock,
+            IFNULL(SUM(stock &lt; threshold), 0)        AS low_stock_count,
+            IFNULL(SUM(status = 1), 0)                AS on_shelf_sku_count
+        FROM product_sku
+        WHERE deleted = 0
+          AND threshold > 0
+    </select>
+
+    <!-- 库存看板-预警列表（stock < threshold 且 threshold > 0） -->
+    <select id="selectLowStock" resultType="com.mall.vo.StockDashboardVO$LowStockItem">
+        SELECT
+            id,
+            product_id,
+            sku_code,
+            specs,
+            stock,
+            threshold,
+            GREATEST(threshold - stock, 0) AS suggest_restock,
+            price
+        FROM product_sku
+        WHERE deleted = 0
+          AND threshold > 0
+          AND stock &lt; threshold
+        ORDER BY (threshold - stock) DESC
+    </select>
+
+    <!-- 库存看板-近 N 日扣减趋势（change_type=1 下单扣减） -->
+    <select id="selectDailyTrend" resultType="com.mall.vo.StockDashboardVO$TrendItem">
+        SELECT
+            DATE_FORMAT(created_at, '%Y-%m-%d') AS date,
+            IFNULL(SUM(change_qty), 0)          AS deduct_qty
+        FROM stock_log
+        WHERE change_type = 1
+          AND created_at &gt;= #{startTime}
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+        ORDER BY date ASC
+    </select>
+    <!-- 原子扣减库存（CAS）：判断与写入在同一条 UPDATE 内，并发下不会超卖 -->
+    <update id="deductStock">
+        UPDATE product_sku
+        SET stock      = stock - #{qty},
+            sales      = IFNULL(sales, 0) + #{qty},
+            updated_at = NOW()
+        WHERE id = #{skuId}
+          AND deleted = 0
+          AND stock &gt;= #{qty}
+    </update>
+
+    <!-- 原子回补库存（取消/退款）：行内自增，销量回退并兜底不为负 -->
+    <update id="restoreStock">
+        UPDATE product_sku
+        SET stock      = stock + #{qty},
+            sales      = GREATEST(IFNULL(sales, 0) - #{qty}, 0),
+            updated_at = NOW()
+        WHERE id = #{skuId}
+          AND deleted = 0
+    </update>
+</mapper>

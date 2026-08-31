@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.CartMapper">
+    <insert id="addCart">
+        INSERT INTO cart (user_id, product_id, sku_id, quantity, checked, created_at, updated_at)
+        VALUES (#{userId}, #{productId}, #{skuId}, #{quantity}, 1, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+                             quantity = quantity + #{quantity},
+                             updated_at = NOW()
+    </insert>
+
+    <select id="listCarts" resultType="com.mall.vo.CartItemVO" parameterType="java.lang.Long">
+        SELECT
+            c.id            AS id,
+            c.product_id    AS product_id,
+            p.product_name  AS product_name,
+            p.main_image    AS main_image,
+            c.sku_id        AS sku_id,
+            s.specs         AS specs,
+            s.image         AS sku_image,
+            s.price         AS price,
+            c.quantity      AS quantity,
+            c.checked       AS checked,
+            s.stock         AS stock
+        FROM cart c
+                 LEFT JOIN product p
+                           ON p.id = c.product_id
+                               AND p.deleted = 0
+                 LEFT JOIN product_sku s
+                           ON s.id = c.sku_id
+                               AND s.deleted = 0
+        WHERE c.user_id = #{userId}
+        ORDER BY c.created_at DESC
+    </select>
+    <select id="selectCheckedItems" resultType="com.mall.vo.OrderPreviewItemVO" parameterType="java.lang.Long">
+        SELECT
+            c.id          AS cart_id,
+            c.product_id,
+            p.product_name,
+            p.main_image,
+            c.sku_id,
+            s.specs,
+            s.price,
+            c.quantity,
+            s.stock
+        FROM cart c
+                 LEFT JOIN product p
+                           ON p.id = c.product_id
+                               AND p.deleted = 0
+                 LEFT JOIN product_sku s
+                           ON s.id = c.sku_id
+                               AND s.deleted = 0
+        WHERE c.user_id = #{userId}
+          AND c.checked = 1          -- 关键：只取勾选项
+        ORDER BY c.created_at DESC
+    </select>
+</mapper>

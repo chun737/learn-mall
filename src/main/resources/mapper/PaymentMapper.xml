@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.PaymentMapper">
+
+    <!-- 后台支付流水多条件分页查询（payment 表已冗余 order_no / user_id，无需联查） -->
+    <select id="selectAdminPaymentList" resultType="com.mall.vo.AdminPaymentListVO">
+        SELECT
+            payment_no,
+            order_no,
+            user_id,
+            amount,
+            pay_type,
+            pay_status,
+            third_trade_no,
+            paid_at
+        FROM payment
+        WHERE deleted = 0
+        <if test="paymentNo != null and paymentNo != ''">
+            AND payment_no = #{paymentNo}
+        </if>
+        <if test="orderNo != null and orderNo != ''">
+            AND order_no = #{orderNo}
+        </if>
+        <if test="payStatus != null">
+            AND pay_status = #{payStatus}
+        </if>
+        <if test="startTime != null">
+            AND paid_at &gt;= #{startTime}
+        </if>
+        <if test="endTime != null">
+            AND paid_at &lt;= #{endTime}
+        </if>
+        ORDER BY paid_at DESC, created_at DESC
+    </select>
+
+    <!-- 支付成功标记（CAS）：仅待支付(0)可翻转为已支付(1)，重复回调影响行数为 0 -->
+    <update id="markPaid">
+        UPDATE payment
+        SET pay_status     = 1,
+            third_trade_no = #{thirdTradeNo},
+            paid_at        = NOW(),
+            updated_at     = NOW()
+        WHERE payment_no = #{paymentNo}
+          AND pay_status = 0
+    </update>
+
+    <!-- 累计退款（CAS）：单条语句内完成"累计校验+写入"，支持部分退款；退满自动置为已退款(3) -->
+    <update id="applyRefund">
+        UPDATE payment
+        SET refund_amount = IFNULL(refund_amount, 0) + #{refundAmount},
+            pay_status    = IF(IFNULL(refund_amount, 0) + #{refundAmount} &gt;= amount, 3, pay_status),
+            updated_at    = NOW()
+        WHERE payment_no = #{paymentNo}
+          AND pay_status = 1
+          AND IFNULL(refund_amount, 0) + #{refundAmount} &lt;= amount
+    </update>
+</mapper>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.CouponMapper">
+
+    <!-- 可领优惠券列表（3.6.1）：启用 + 未删除 + 领取窗口已开始且未结束 -->
+    <select id="selectReceivableList" resultType="com.mall.entity.Coupon">
+        SELECT *
+        FROM coupon
+        WHERE deleted = 0
+          AND status = 1
+          AND receive_start_time &lt;= NOW()
+          AND receive_end_time &gt;= NOW()
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 领券行锁读：FOR UPDATE 悲观锁串行化同一券的并发领取（锁在 DB 数据行上，
+         与应用服务器数量无关），配合事务关闭"限领 COUNT 校验 → 扣减"之间的 check-then-act 竞态窗口 -->
+    <select id="selectByIdForUpdate" resultType="com.mall.entity.Coupon">
+        SELECT *
+        FROM coupon
+        WHERE id = #{id}
+        FOR UPDATE
+    </select>
+
+    <!-- 领券防超发（5.4.6）：条件扣减余量，行锁串行化，影响行数 0 = 已领完 -->
+    <update id="decreaseRemain">
+        UPDATE coupon
+        SET remain_count = remain_count - 1
+        WHERE id = #{id}
+          AND remain_count &gt; 0
+          AND deleted = 0
+    </update>
+
+    <!-- 后台列表（4.7.1）：领取量 = total - remain，核销量按 user_coupon 已用聚合 -->
+    <select id="selectAdminList" resultType="com.mall.vo.CouponAdminVO">
+        SELECT
+            c.id,
+            c.coupon_name,
+            c.type,
+            c.threshold_amount,
+            c.discount_amount,
+            c.total_count,
+            (c.total_count - c.remain_count) AS received_count,
+            IFNULL(u.used_count, 0)           AS used_count,
+            c.per_limit,
+            c.receive_start_time,
+            c.receive_end_time,
+            c.valid_days,
+            c.status
+        FROM coupon c
+        LEFT JOIN (
+            SELECT coupon_id, COUNT(*) AS used_count
+            FROM user_coupon
+            WHERE coupon_status = 1
+            GROUP BY coupon_id
+        ) u ON u.coupon_id = c.id
+        WHERE c.deleted = 0
+        <if test="status != null">
+            AND c.status = #{status}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND c.coupon_name LIKE CONCAT('%', #{keyword}, '%')
+        </if>
+        ORDER BY c.created_at DESC
+    </select>
+
+    <!-- 启用/停用（4.7.3） -->
+    <update id="updateStatus">
+        UPDATE coupon
+        SET status = #{status}
+        WHERE id = #{id}
+          AND deleted = 0
+    </update>
+
+</mapper>

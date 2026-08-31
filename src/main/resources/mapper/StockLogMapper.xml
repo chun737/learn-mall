@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.StockLogMapper">
+
+    <!-- 通用列：流水查询用 -->
+    <sql id="baseColumns">
+        id,
+        sku_id,
+        order_no,
+        change_type,
+        change_qty,
+        before_stock,
+        after_stock,
+        remark,
+        created_at
+    </sql>
+
+    <!-- 库存流水总览：多条件分页 -->
+    <select id="selectStockLogList" resultType="com.mall.vo.StockLogVO">
+        SELECT
+            <include refid="baseColumns"/>
+        FROM stock_log
+        WHERE 1 = 1
+        <if test="skuId != null">
+            AND sku_id = #{skuId}
+        </if>
+        <if test="changeType != null">
+            AND change_type = #{changeType}
+        </if>
+        <if test="orderNo != null and orderNo != ''">
+            AND order_no = #{orderNo}
+        </if>
+        <if test="startTime != null">
+            AND created_at &gt;= #{startTime}
+        </if>
+        <if test="endTime != null">
+            AND created_at &lt;= #{endTime}
+        </if>
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+    <!-- 单 SKU 库存流水：按 SKU ID 分页 -->
+    <select id="selectBySkuId" resultType="com.mall.vo.StockLogVO">
+        SELECT
+            <include refid="baseColumns"/>
+        FROM stock_log
+        WHERE sku_id = #{skuId}
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+</mapper>

@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.OrderMapper">
+
+    <!-- 订单列表：一条 SQL 联查明细，聚合商品数量 + 首条商品摘要（避免 N+1） -->
+    <select id="selectOrderList" resultType="com.mall.vo.OrderListVO">
+        SELECT
+            o.order_no,
+            o.order_status,
+            o.payment_status,
+            o.pay_amount,
+            o.created_at,
+            COALESCE(SUM(oi.quantity), 0) AS total_quantity,
+            (
+                SELECT oi2.sku_image
+                FROM order_item oi2
+                WHERE oi2.order_id = o.id
+                LIMIT 1
+            ) AS product_image,
+            (
+                SELECT oi2.product_name
+                FROM order_item oi2
+                WHERE oi2.order_id = o.id
+                LIMIT 1
+            ) AS product_name
+        FROM `order` o
+        LEFT JOIN order_item oi ON oi.order_id = o.id
+        WHERE o.user_id = #{userId}
+          AND o.deleted = 0
+        <if test="orderStatus != null">
+            AND o.order_status = #{orderStatus}
+        </if>
+        GROUP BY o.id
+        ORDER BY MAX(o.created_at) DESC
+    </select>
+
+    <!-- 管理员端订单列表：多条件查询，联查明细聚合商品数量，join user 表按手机号筛选 -->
+    <select id="selectAdminOrderList" resultType="com.mall.vo.AdminOrderListVO">
+        SELECT
+            o.order_no,
+            o.user_id,
+            o.receiver_name,
+            o.receiver_phone,
+            o.order_status,
+            o.payment_status,
+            o.pay_amount,
+            o.created_at,
+            COALESCE(SUM(oi.quantity), 0) AS item_count
+        FROM `order` o
+        LEFT JOIN order_item oi ON oi.order_id = o.id
+        LEFT JOIN `user` u        ON u.id = o.user_id
+        WHERE o.deleted = 0
+        <if test="orderNo != null and orderNo != ''">
+            AND o.order_no = #{orderNo}
+        </if>
+        <if test="userPhone != null and userPhone != ''">
+            AND u.phone = #{userPhone}
+        </if>
+        <if test="orderStatus != null">
+            AND o.order_status = #{orderStatus}
+        </if>
+        <if test="paymentStatus != null">
+            AND o.payment_status = #{paymentStatus}
+        </if>
+        <if test="startTime != null">
+            AND o.created_at &gt;= #{startTime}
+        </if>
+        <if test="endTime != null">
+            AND o.created_at &lt;= #{endTime}
+        </if>
+        GROUP BY o.id, o.order_no, o.user_id, o.receiver_name, o.receiver_phone,
+                 o.order_status, o.payment_status, o.pay_amount, o.created_at
+        ORDER BY o.created_at DESC
+    </select>
+    <resultMap id="OrderVoResultMap" type="com.mall.vo.OrderDetailVO">
+        <!-- 1. 主表字段 -->
+        <id property="orderNo" column="order_no"/>
+        <result property="orderStatus" column="order_status"/>
+        <result property="paymentStatus" column="payment_status"/>
+        <result property="totalAmount" column="total_amount"/>
+        <result property="freightAmount" column="freight_amount"/>
+        <result property="payAmount" column="pay_amount"/>
+        <result property="remark" column="remark"/>
+        <result property="paidAt" column="paid_at"/>
+        <result property="shippedAt" column="shipped_at"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="createdAt" column="created_at"/>
+
+        <!-- 2. 收货快照：一对一（order 表的快照列） -->
+        <association property="receiver" javaType="com.mall.vo.OrderReceiverVO">
+            <result property="receiverName" column="receiver_name"/>
+            <result property="receiverPhone" column="receiver_phone"/>
+            <result property="province" column="receiver_province"/>
+            <result property="city" column="receiver_city"/>
+            <result property="district" column="receiver_district"/>
+            <result property="detailAddress" column="receiver_address"/>
+        </association>
+        <!-- 4. 支付信息：一对一（可 null） -->
+        <association property="payment" javaType="com.mall.vo.PaymentVO">
+            <result property="paymentNo" column="payment_no"/>
+            <result property="payType" column="pay_type"/>
+            <result property="payStatus" column="pay_status"/>
+            <result property="paidAt" column="payment_paid_at"/>
+        </association>
+        <!-- 3. 明细列表：一对多 -->
+        <collection property="items" ofType="com.mall.vo.OrderItemVO">
+            <id property="skuId" column="item_sku_id"/>
+            <result property="productId" column="product_id"/>
+            <result property="productName" column="item_product_name"/>
+            <result property="skuSpecs" column="item_sku_specs"/>
+            <result property="skuImage" column="item_sku_image"/>
+            <result property="price" column="item_price"/>
+            <result property="quantity" column="item_quantity"/>
+            <result property="totalAmount" column="item_total_amount"/>
+        </collection>
+    </resultMap>
+    <select id="getOrderDetail" resultMap="OrderVoResultMap">
+        SELECT
+            o.order_no, o.order_status, o.payment_status,
+            o.total_amount, o.freight_amount, o.pay_amount, o.remark,
+            o.paid_at, o.shipped_at, o.completed_at, o.created_at,
+            o.receiver_name, o.receiver_phone, o.receiver_province,
+            o.receiver_city, o.receiver_district, o.receiver_address,
+            oi.product_id   AS item_product_id,
+            oi.product_name AS item_product_name,
+            oi.sku_id       AS item_sku_id,
+            oi.sku_specs    AS item_sku_specs,
+            oi.sku_image    AS item_sku_image,
+            oi.price        AS item_price,
+            oi.quantity     AS item_quantity,
+            oi.total_amount AS item_total_amount,
+            p.payment_no, p.pay_type, p.pay_status, p.paid_at AS payment_paid_at
+        FROM `order` o
+                 LEFT JOIN order_item oi ON oi.order_id = o.id
+                 LEFT JOIN payment p     ON p.order_id = o.id AND p.pay_status = 1
+        WHERE o.order_no = #{orderNo}
+          AND o.user_id = #{userId}
+    </select>
+
+    <!-- 管理员端订单详情：不带 userId 过滤，后台可查任意用户订单（含用户端已删除的） -->
+    <select id="getAdminOrderDetail" resultMap="OrderVoResultMap">
+        SELECT
+            o.order_no, o.order_status, o.payment_status,
+            o.total_amount, o.freight_amount, o.pay_amount, o.remark,
+            o.paid_at, o.shipped_at, o.completed_at, o.created_at,
+            o.receiver_name, o.receiver_phone, o.receiver_province,
+            o.receiver_city, o.receiver_district, o.receiver_address,
+            oi.product_id   AS item_product_id,
+            oi.product_name AS item_product_name,
+            oi.sku_id       AS item_sku_id,
+            oi.sku_specs    AS item_sku_specs,
+            oi.sku_image    AS item_sku_image,
+            oi.price        AS item_price,
+            oi.quantity     AS item_quantity,
+            oi.total_amount AS item_total_amount,
+            p.payment_no, p.pay_type, p.pay_status, p.paid_at AS payment_paid_at
+        FROM `order` o
+                 LEFT JOIN order_item oi ON oi.order_id = o.id
+                 LEFT JOIN payment p     ON p.order_id = o.id AND p.pay_status = 1
+        WHERE o.order_no = #{orderNo}
+    </select>
+
+    <!-- 支付成功翻转订单状态（CAS）：仅待支付(0)允许翻转，取消/退款单在此被拒绝 -->
+    <update id="markPaidById">
+        UPDATE `order`
+        SET order_status   = 1,
+            payment_status = 1,
+            paid_at        = NOW(),
+            updated_at     = NOW()
+        WHERE id = #{id}
+          AND order_status = 0
+    </update>
+    <!-- 取消未支付订单（CAS）：并发取消只有一次生效，已支付订单在此被拒绝 -->
+    <update id="cancelUnpaid">
+        UPDATE `order`
+        SET order_status = 4,
+            updated_at   = NOW()
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+          AND order_status = 0
+          AND deleted = 0
+    </update>
+
+    <!-- 退款终止订单（CAS）：仅已支付/已发货允许翻转 -->
+    <update id="markRefunded">
+        UPDATE `order`
+        SET order_status   = 5,
+            payment_status = 2,
+            updated_at     = NOW()
+        WHERE id = #{id}
+          AND order_status IN (1, 2)
+    </update>
+    <!-- 定时任务数据源：超时未支付订单（分批限量；需索引 idx_status_created） -->
+    <select id="selectTimeoutUnpaid" resultType="com.mall.entity.Order">
+        SELECT *
+        FROM `order`
+        WHERE order_status = 0
+          AND deleted = 0
+          AND created_at &lt; #{deadline}
+        LIMIT #{limit}
+    </select>
+
+    <!-- 超时取消（CAS）：仅待支付(0)可翻转，与支付路径互斥 -->
+    <update id="cancelUnpaidById">
+        UPDATE `order`
+        SET order_status = 4,
+            updated_at   = NOW()
+        WHERE id = #{id}
+          AND order_status = 0
+          AND deleted = 0
+    </update>
+</mapper>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.UserCouponMapper">
+
+    <!-- 限领校验（3.6.2）：统计本人已领张数（含已使用/已过期） -->
+    <select id="countReceived" resultType="long">
+        SELECT COUNT(*)
+        FROM user_coupon
+        WHERE user_id = #{userId}
+          AND coupon_id = #{couponId}
+    </select>
+
+    <!-- 我的优惠券（3.6.3）：联券模板，分页 -->
+    <select id="selectMyCoupons" resultType="com.mall.vo.UserCouponVO">
+        SELECT
+            uc.id            AS user_coupon_id,
+            uc.coupon_id,
+            c.coupon_name,
+            c.type,
+            c.threshold_amount,
+            c.discount_amount,
+            uc.coupon_status,
+            uc.receive_time,
+            uc.expire_time,
+            uc.use_time,
+            uc.order_no
+        FROM user_coupon uc
+        INNER JOIN coupon c ON c.id = uc.coupon_id
+        WHERE uc.user_id = #{userId}
+        <if test="status != null">
+            AND uc.coupon_status = #{status}
+        </if>
+        ORDER BY uc.receive_time DESC
+    </select>
+
+    <!-- 结算可用券底表（3.6.4）：未使用且未过期，门槛过滤在 Java 层做 -->
+    <select id="selectUsable" resultType="com.mall.vo.UserCouponVO">
+        SELECT
+            uc.id            AS user_coupon_id,
+            uc.coupon_id,
+            c.coupon_name,
+            c.type,
+            c.threshold_amount,
+            c.discount_amount,
+            uc.expire_time
+        FROM user_coupon uc
+        INNER JOIN coupon c ON c.id = uc.coupon_id
+        WHERE uc.user_id = #{userId}
+          AND uc.coupon_status = 0
+          AND uc.expire_time &gt; NOW()
+    </select>
+
+    <!-- 后台领取记录（4.7.4）：联用户名，分页 -->
+    <select id="selectRecords" resultType="com.mall.vo.CouponRecordVO">
+        SELECT
+            uc.id            AS user_coupon_id,
+            uc.user_id,
+            u.username,
+            uc.coupon_status,
+            uc.receive_time,
+            uc.use_time,
+            uc.order_no
+        FROM user_coupon uc
+        INNER JOIN user u ON u.id = uc.user_id
+        WHERE uc.coupon_id = #{couponId}
+        ORDER BY uc.receive_time DESC
+    </select>
+
+</mapper>

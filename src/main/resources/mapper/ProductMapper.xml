@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.mapper.ProductMapper">
+    <!-- 逻辑删除商品（SPU） -->
+    <update id="deleteProduct">
+        UPDATE product
+        SET deleted = 1, updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 逻辑删除商品下的所有 SKU -->
+    <update id="deleteProductSkus">
+        UPDATE product_sku
+        SET deleted = 1
+        WHERE product_id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 商品列表：LEFT JOIN 上架 SKU 聚合出价格区间与销量 -->
+    <select id="selectProductList" resultType="com.mall.vo.ProductListVO">
+        SELECT
+            p.id,
+            p.category_id,
+            p.product_name,
+            p.sub_title,
+            p.main_image,
+            IFNULL(s.min_price, 0) AS min_price,
+            IFNULL(s.max_price, 0) AS max_price,
+            IFNULL(s.sales, 0)     AS sales
+        FROM product p
+        LEFT JOIN (
+            SELECT product_id,
+                   MIN(price) AS min_price,
+                   MAX(price) AS max_price,
+                   SUM(sales) AS sales
+            FROM product_sku
+            WHERE deleted = 0 AND status = 1
+            GROUP BY product_id
+        ) s ON s.product_id = p.id
+        WHERE p.deleted = 0
+          AND p.status = 1
+        <if test="categoryId != null">
+            AND p.category_id = #{categoryId}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (p.product_name LIKE CONCAT('%', #{keyword}, '%')
+                OR p.sub_title LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        <choose>
+            <when test="sortBy == 'priceAsc'">ORDER BY s.min_price ASC</when>
+            <when test="sortBy == 'priceDesc'">ORDER BY s.min_price DESC</when>
+            <when test="sortBy == 'salesDesc'">ORDER BY s.sales DESC</when>
+            <when test="sortBy == 'newest'">ORDER BY p.created_at DESC</when>
+            <otherwise>ORDER BY p.created_at DESC</otherwise>
+        </choose>
+    </select>
+
+    <resultMap id="ProductDetailResultMap" type="com.mall.vo.ProductDetailVO">
+        <id property="id" column="id"/>
+        <result property="categoryId" column="category_id"/>
+        <result property="productName" column="product_name"/>
+        <result property="subTitle" column="sub_title"/>
+        <result property="mainImage" column="main_image"/>
+        <result property="detail" column="detail"/>
+        <!-- 一对多：把同 product_id 的多行 SKU 聚合成 List<SkuVO> -->
+        <collection property="skus" ofType="com.mall.vo.SkuVO">
+            <id property="id" column="sku_id"/>
+            <result property="skuCode" column="sku_code"/>
+            <result property="specs" column="specs"/>
+            <result property="price" column="price"/>
+            <result property="stock" column="stock"/>
+            <result property="sales" column="sales"/>
+            <result property="image" column="image"/>
+        </collection>
+    </resultMap>
+
+    <!-- 一条 SQL：JOIN 出商品 + 所有 SKU，交给 resultMap 分组 -->
+    <select id="getDPs" resultMap="ProductDetailResultMap">
+        SELECT
+            p.id,
+            p.category_id,
+            p.product_name,
+            p.sub_title,
+            p.main_image,
+            p.detail,
+            s.id          AS sku_id,
+            s.sku_code,
+            s.specs,
+            s.price,
+            s.stock,
+            s.sales,
+            s.image
+        FROM product p
+                 LEFT JOIN product_sku s
+                           ON s.product_id = p.id
+                               AND s.deleted = 0
+                               AND s.status = 1
+        WHERE p.id = #{id}
+          AND p.deleted = 0
+          AND p.status = 1
+    </select>
+    <select id="getHot10" resultType="java.lang.String">
+        SELECT p.product_name
+        FROM product p
+        LEFT JOIN (
+            SELECT SUM(sales) AS total_sales,
+                   product_id
+            FROM product_sku
+            WHERE deleted = 0
+            GROUP BY product_id
+        ) s ON s.product_id = p.id
+        WHERE p.deleted = 0
+          AND p.status = 1
+        <if test="keyword != null and keyword != ''">
+            AND p.product_name LIKE CONCAT('%', #{keyword}, '%')
+        </if>
+        ORDER BY IFNULL(s.total_sales, 0) DESC
+        LIMIT 10
+    </select>
+    <!-- 后台商品列表：聚合 SKU 的库存/数量/销量，返回全部状态商品（状态可筛选） -->
+    <select id="ListProduct" resultType="com.mall.vo.ProductListAdminVO">
+        SELECT
+            p.id,
+            p.category_id,
+            p.product_name,
+            p.sub_title,
+            p.main_image,
+            p.status,
+            CASE p.status
+                WHEN 0 THEN '下架'
+                WHEN 1 THEN '上架'
+                WHEN 2 THEN '草稿'
+                ELSE '未知'
+            END                          AS status_text,
+            COUNT(s.id)                   AS sku_count,
+            IFNULL(SUM(s.stock), 0)       AS stock_total,
+            IFNULL(SUM(s.sales), 0)       AS sales,
+            p.created_at
+        FROM product p
+        LEFT JOIN product_sku s
+               ON s.product_id = p.id
+              AND s.deleted = 0
+        WHERE p.deleted = 0
+        <if test="categoryId != null">
+            AND p.category_id = #{categoryId}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (p.product_name LIKE CONCAT('%', #{keyword}, '%')
+                OR p.sub_title LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        <if test="status != null">
+            AND p.status = #{status}
+        </if>
+        <if test="startTime != null">
+            AND p.created_at &gt;= #{startTime}
+        </if>
+        <if test="endTime != null">
+            AND p.created_at &lt;= #{endTime}
+        </if>
+        GROUP BY p.id, p.category_id, p.product_name, p.sub_title, p.main_image, p.status, p.created_at
+        ORDER BY p.created_at DESC
+    </select>
+
+    <!-- 布隆过滤器预热数据源（ProductBloomIndex.loadAllIds）：全部未删除商品 ID -->
+    <select id="selectAllIds" resultType="java.lang.Long">
+        SELECT id
+        FROM product
+        WHERE deleted = 0
+    </select>
+
+
+</mapper>

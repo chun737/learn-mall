@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>模拟收银台</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#f5f6f8; display:flex; justify-content:center; padding-top:80px; }
+  .card { background:#fff; border-radius:12px; padding:32px; width:360px; box-shadow:0 2px 12px rgba(0,0,0,.08); }
+  .amount { font-size:32px; color:#e62021; margin:16px 0; }
+  button { width:100%; padding:12px; border:0; border-radius:8px; background:#e62021; color:#fff; font-size:16px; cursor:pointer; }
+  button:disabled { background:#ccc; }
+  #msg { margin-top:16px; font-size:14px; color:#666; min-height:20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h3>模拟收银台（演示）</h3>
+  <div>支付单号：<span id="paymentNo"></span></div>
+  <div>商品： <span id="subject"></span></div>
+  <div class="amount">¥ <span id="amount"></span></div>
+  <button id="btn" onclick="pay()">确认支付</button>
+  <div id="msg"></div>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+document.getElementById('paymentNo').textContent = q.get('paymentNo') || '';
+document.getElementById('subject').textContent   = q.get('subject') || '';
+document.getElementById('amount').textContent    = q.get('amount') || '';
+
+// 支付动作以当前登录用户身份发起（后端校验只能支付自己的订单）
+async function pay() {
+  const btn = document.getElementById('btn');
+  const msg = document.getElementById('msg');
+  btn.disabled = true;
+  msg.textContent = '支付中...';
+  try {
+    const token = localStorage.getItem('token') || localStorage.getItem('Authorization') || '';
+    const resp = await fetch('/payment/mock/pay?paymentNo=' + encodeURIComponent(q.get('paymentNo') || ''), {
+      method: 'POST',
+      headers: token ? { 'Authorization': token.startsWith('Bearer') ? token : 'Bearer ' + token } : {}
+    });
+    const body = await resp.json();
+    msg.textContent = (body.code === 200 || body.code === 0) ? '支付成功！可返回订单页查看。' : ('失败：' + (body.message || resp.status));
+  } catch (e) {
+    msg.textContent = '请求失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
