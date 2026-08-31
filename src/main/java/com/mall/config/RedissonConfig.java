@@ -6,6 +6,7 @@ import org.redisson.config.Config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
 
 /**
  * Redisson 客户端配置：连接地址复用 spring.data.redis 配置，
@@ -20,12 +21,16 @@ public class RedissonConfig {
 
     @Value("${spring.data.redis.port:6379}")
     private int redisPort;
+    @Value("${spring.data.redis.password:}")
+    private String redisPassword;
+
 
     @Bean(destroyMethod = "shutdown")
     public RedissonClient redissonClient() {
         Config config = new Config();
         config.useSingleServer()
-                .setAddress("redis://" + redisHost + ":" + redisPort);
+                .setAddress("redis://" + redisHost + ":" + redisPort)
+                .setPassword(StringUtils.hasText(redisPassword) ? redisPassword : null);
         return Redisson.create(config);
     }
 }

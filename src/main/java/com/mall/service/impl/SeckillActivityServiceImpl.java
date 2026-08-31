@@ -21,6 +21,7 @@ import com.mall.vo.*;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -170,7 +171,13 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         String key1 = Constants.SECKILL_STOCK_PREFIX + id;
         String key2 = SECKILL_BOUGHT_PREFIX + id;
         int perLimit = activity.getPerLimit() != null && activity.getPerLimit() > 0 ? activity.getPerLimit() : 1;
-        Long result = redisTemplate.execute(SECKILL_SCRIPT,
+        // ARGV 用 StringRedisSerializer：GenericJacksonJsonRedisSerializer 默认带 @class 类型信息，
+        // 会把 "1" 序列化成 "java.lang.String":"\"1\""，Lua 端 tonumber('"1"') 返回 nil → 触发 -3（参数非法）。
+        // 这里固定走字符串序列化，Lua 才能正常解析数字
+        Long result = redisTemplate.execute(
+                SECKILL_SCRIPT,
+                RedisSerializer.string(),
+                null,
                 List.of(key1, key2),
                 userId.toString(), String.valueOf(quantity), String.valueOf(perLimit));
         // 脚本约定：1=成功 -1=库存不足 -2=超限购 -3=参数非法
