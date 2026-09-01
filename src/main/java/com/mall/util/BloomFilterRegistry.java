@@ -45,10 +45,10 @@ public class BloomFilterRegistry {
             // ① 拿句柄 ② tryInit 声明容量（幂等：已有同名结构返回 false，沿用旧数据，重启不清空预热成果）
             RBloomFilter<Long> filter = redissonClient.getBloomFilter(support.filterName());
             filter.tryInit(support.expectedInsertions(), Constants.BLOOM_FALSE_PROBABILITY);
-            // ③ 仅从未灌过数据时全量预热（首次上线或 Redis 被清空），避免每次重启扫表
-            if (filter.count() == 0) {
-                support.loadAllIds().forEach(filter::add);
-            }
+            // ③ 每次启动全量预热：活动/商品表数据量小，扫表成本可忽略。
+            //    不能只按 count()==0 预热——SQL 直插新活动后，布隆里没有新 id，
+            //    mightContain 会误判 404，且此时 count>0 导致重启也不重载，必须每次全量重建。
+            support.loadAllIds().forEach(filter::add);
             // ④ 入册
             filters.put(support.filterName(), filter);
         }

@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 --@diagnostic disable: undefined-global
 --- 秒杀原子预扣脚本
 --- KEYS[1] = seckill:stock:{id}    库存计数（string，须预先 SET totalStock）

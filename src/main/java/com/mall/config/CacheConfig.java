@@ -9,9 +9,11 @@ import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
-import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -36,19 +38,27 @@ public class CacheConfig {
     /** key 统一前缀已迁至 Constants.CACHE_PREFIX（全项目单一数据源） */
 
     /**
-     * Jackson 3（tools.jackson）通用 JSON 序列化器：值以 JSON 存储，内嵌 @class 类型信息。
-     * 注意：Jackson 3 版默认不开启类型信息（防多态反序列化攻击），必须显式 enableDefaultTyping，
-     * 且用白名单限定可实例化的类型；GenericJackson2JsonRedisSerializer 自 4.0 起已废弃待删除。
+     * Jackson 2（com.fasterxml.jackson）通用 JSON 序列化器：值以 JSON 存储，内嵌 @class 类型信息。
+     * Spring Data Redis 3.x 的 builder 无 enableDefaultTyping(validator)，改用自定义 ObjectMapper：
+     * 通过 activateDefaultTyping + BasicPolymorphicTypeValidator 白名单开启类型信息（防多态反序列化攻击）。
      */
-    private static final GenericJacksonJsonRedisSerializer JSON_SERIALIZER =
-            GenericJacksonJsonRedisSerializer.builder()
-                    .enableDefaultTyping(BasicPolymorphicTypeValidator.builder()
-                            .allowIfSubType("com.mall.")
-                            .allowIfSubType("java.util.")
-                            .allowIfSubType("java.lang.")
-                            .allowIfSubType("java.math.")
-                            .build())
-                    .build();
+    private static final GenericJackson2JsonRedisSerializer JSON_SERIALIZER = buildJsonSerializer();
+
+    private static GenericJackson2JsonRedisSerializer buildJsonSerializer() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.activateDefaultTyping(
+                BasicPolymorphicTypeValidator.builder()
+                        .allowIfSubType("com.mall.")
+                        .allowIfSubType("java.util.")
+                        .allowIfSubType("java.lang.")
+                        .allowIfSubType("java.math.")
+                        .build(),
+                ObjectMapper.DefaultTyping.NON_FINAL,
+                JsonTypeInfo.As.PROPERTY);
+        return GenericJackson2JsonRedisSerializer.builder()
+                .objectMapper(mapper)
+                .build();
+    }
 
     @Bean
     public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {

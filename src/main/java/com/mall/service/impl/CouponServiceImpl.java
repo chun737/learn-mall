@@ -21,8 +21,10 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -51,8 +53,10 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     private final UserCouponMapper userCouponMapper;
     private final StringRedisTemplate stringRedisTemplate;
 
-    /** 与 SecurityConfig 保持一致的手动构建方式；Jackson 3 内置 java.time 支持，可直接序列化 LocalDateTime */
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /** Jackson 2 需显式注册 JavaTimeModule 才能序列化 LocalDateTime（Jackson 3 内置，2 不内置） */
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     /** 可领券列表缓存的 key/TTL 定义在 Constants（CACHE_KEY_COUPON_RECEIVABLE / TTL_COUPON_RECEIVABLE） */
 
@@ -73,8 +77,16 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
         } catch (Exception ignored) {
         }
         if (cached != null) {
-            return objectMapper.readValue(cached, new TypeReference<List<CouponVO>>() {
-            });
+            try {
+                return objectMapper.readValue(cached, new TypeReference<List<CouponVO>>() {
+                });
+            } catch (Exception e) {
+                // 反序列化失败（脏缓存/版本升级残留），删除缓存后降级走 DB 查询
+                try {
+                    stringRedisTemplate.delete(Constants.CACHE_KEY_COUPON_RECEIVABLE);
+                } catch (Exception ignored) {
+                }
+            }
         }
 
         // 2. 缓存未命中：SQL 查启用 + 未删除 + 领取窗口已开始且未结束的券

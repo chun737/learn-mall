@@ -3,9 +3,11 @@ package com.mall.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mall.common.BusinessException;
 import com.mall.common.Constants;
+import com.mall.common.SnowflakeIdGenerator;
 import com.mall.dto.OrderCreateDTO;
 import com.mall.dto.OrderSkuDTO;
 import com.mall.dto.SeckillCreateDTO;
+import com.mall.dto.SeckillOrderMessage;
 import com.mall.entity.Order;
 import com.mall.entity.ProductSku;
 import com.mall.entity.SeckillActivity;
@@ -18,6 +20,9 @@ import com.mall.util.BloomFilterRegistry;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mall.util.SecurityUtils;
 import com.mall.vo.*;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -51,11 +56,14 @@ import static com.mall.enums.ErrorCode.*;
 @Service
 public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMapper, SeckillActivity> implements ISeckillActivityService {
 
+    private static final Logger log = LoggerFactory.getLogger(SeckillActivityServiceImpl.class);
+
     private final SeckillActivityMapper seckillActivityMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final BloomFilterRegistry bloomFilterRegistry;
     private final IOrderService orderService;
     private final ProductSkuMapper productSkuMapper;
+    private final SnowflakeIdGenerator snowflakeIdGenerator;
     /** 秒杀原子预扣脚本：KEYS[库存key, 已购集合key]，ARGV[userId, 数量]，返回 1/-1/-2 */
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     // 活动列表/详情的缓存 key 与 TTL 定义在 Constants（SECKILL_LIST_KEY / TTL_SECKILL_LIST / SECKILL_DETAIL_KEY_PREFIX / TTL_SECKILL_DETAIL / MAX_PAGE_SIZE）
@@ -65,16 +73,22 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         SECKILL_SCRIPT.setLocation(new ClassPathResource("Seckill.lua"));  // 脚本来源
         SECKILL_SCRIPT.setResultType(Long.class);                                // 返回类型（对应转换表的 integer）
     }
+
+    private final RocketMQTemplate rocketMQTemplate;
+
     public SeckillActivityServiceImpl(SeckillActivityMapper seckillActivityMapper,
                                       RedisTemplate<String, Object> redisTemplate,
                                       BloomFilterRegistry bloomFilterRegistry,
                                       IOrderService orderService,
-                                      ProductSkuMapper productSkuMapper) {
+                                      ProductSkuMapper productSkuMapper,
+                                      SnowflakeIdGenerator snowflakeIdGenerator, RocketMQTemplate rocketMQTemplate) {
         this.seckillActivityMapper = seckillActivityMapper;
         this.redisTemplate = redisTemplate;
         this.bloomFilterRegistry = bloomFilterRegistry;
         this.orderService = orderService;
         this.productSkuMapper = productSkuMapper;
+        this.snowflakeIdGenerator = snowflakeIdGenerator;
+        this.rocketMQTemplate = rocketMQTemplate;
     }
 
     @Override
@@ -193,42 +207,27 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         if (result == -3) {
             throw new BusinessException(PARAM_ERROR);
         }
-
-        // 预扣成功后创建订单；DB 侧失败必须补偿 Redis（回库存 + 退已购数量），否则库存漏损且用户被永久限购
-        OrderCreateDTO orderCreateDTO = new OrderCreateDTO();
-        orderCreateDTO.setAddressId(addressId);
-        if (couponId != null) {
-            orderCreateDTO.setCouponId(couponId);
-        }
-        OrderSkuDTO item = new OrderSkuDTO();
-        item.setSkuId(activity.getSkuId());
-        item.setQuantity(quantity);
-        orderCreateDTO.setSkuList(List.of(item));
-        OrderCreateVO order;
+        //利用rocketmq异步解耦支付与秒杀
+        SeckillOrderMessage msg = new SeckillOrderMessage();
+        msg.setActivityId(id);
+        msg.setQuantity(quantity);
+        msg.setCouponId(couponId);
+        msg.setUserId(userId);
+        msg.setSkuId(activity.getSkuId());
+        msg.setOrderNo(String.valueOf(snowflakeIdGenerator.nextId()));
         try {
-            order = orderService.addOrder(orderCreateDTO);
+            rocketMQTemplate.convertAndSend("seckill-order-topic", msg);
         } catch (Exception e) {
-            try {
-                redisTemplate.opsForValue().increment(key1, quantity);
-                redisTemplate.opsForHash().increment(key2, userId.toString(), -quantity);
-            } catch (Exception ignored) {
-                // 补偿失败只能靠对账修复，不吞掉原始业务异常
-            }
-            throw e;
+            // MQ 发送失败（broker 不可达/超时/路由异常）：必须回补 Redis 库存，
+            // 否则 Lua 已扣的库存永远不释放，活动会被"幽灵"扣空（即使后面 MQ 修好，库存也回不来了）。
+            // 抛业务异常让前端看到"系统繁忙"，但库存已回补，不影响后续请求
+            log.error("秒杀 MQ 发送失败，活动={}, userId={}", id, userId, e);
+            redisTemplate.opsForValue().increment(Constants.SECKILL_STOCK_PREFIX + id, quantity);
+            throw new BusinessException(SYSTEM_ERROR);
         }
-
         SeckillResultVO vo = new SeckillResultVO();
-        vo.setSeckillResult(Constants.SECKILL_RESULT_SUCCESS);
-        vo.setSeckillResultText("下单成功");
-        vo.setOrderNo(order.getOrderNo());
-        vo.setPayAmount(order.getPayAmount());
-        // 记录抢购结果供 3.6.8 轮询；必须写在补偿 catch 之外——订单已成立，此步失败不能触发库存回滚
-        try {
-            redisTemplate.opsForHash().put(Constants.SECKILL_RESULT_PREFIX + id,
-                    userId.toString(), order.getOrderNo());
-        } catch (Exception ignored) {
-            // 写失败只影响结果查询，不影响订单本身
-        }
+        vo.setSeckillResult(Constants.SECKILL_RESULT_QUEUING);  // 0 = 排队中
+        vo.setSeckillResultText("排队中");
         return vo;
     }
 
