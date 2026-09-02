@@ -20,7 +20,8 @@ public final class Constants {
     public static final String ROLE_ADMIN = "ADMIN";
     /** Spring Security 权限前缀 */
     public static final String ROLE_PREFIX = "ROLE_";
-
+    /*图片上传*/
+    public static final Long  MAX_IMAGE_SIZE = 5 * 1024 * 1024L;
     // ==================== Redis ====================
     /** 登录 token 白名单 key 前缀 */
     public static final String LOGIN_TOKEN_PREFIX = "login:token:";
