@@ -61,9 +61,9 @@ public class SeckillOrderConsumer implements RocketMQListener<SeckillOrderMessag
             // 真正建单失败：
             Long userId = SecurityUtils.getUserId();
             // 1. 回补库存
-            redisTemplate.opsForValue().increment(SECKILL_STOCK_PREFIX + activityId, quantity);
+            redisTemplate.opsForValue().increment(seckillStockKey(activityId), quantity);
             // 2. 回退已购数量（否则用户被记住"抢过一次"，下次限购拦截）
-            redisTemplate.opsForHash().increment(SECKILL_BOUGHT_PREFIX + activityId, userId, -quantity);
+            redisTemplate.opsForHash().increment(seckillBoughtKey(activityId), userId, -quantity);
             // 3. 标记失败结果（前端 getResult 能查到"下单失败"）
             redisTemplate.opsForHash().put(SECKILL_RESULT_PREFIX + activityId, userId, "FAILED");
 

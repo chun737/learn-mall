@@ -33,12 +33,21 @@ public final class Constants {
     public static final String CACHE_PREFIX = "mall:";
     /** 秒杀活动信息缓存 key 前缀（读多写少） */
     public static final String SECKILL_INFO_PREFIX = "seckill:info:";
-    /** 秒杀剩余库存计数 key 前缀，完整 key = SECKILL_STOCK_PREFIX + activityId */
-    public static final String SECKILL_STOCK_PREFIX = "seckill:stock:";
-    /** 秒杀已购集合 key 前缀（Set，记录已购买用户，防限购超买），完整 key = SECKILL_BOUGHT_PREFIX + activityId */
-    public static final String SECKILL_BOUGHT_PREFIX = "seckill:bought:";
     /** 秒杀抢购结果 key 前缀（hash，field=userId，value=orderNo），完整 key = SECKILL_RESULT_PREFIX + activityId */
     public static final String SECKILL_RESULT_PREFIX = CACHE_PREFIX + "seckill:result:";
+
+    // ---- 秒杀库存 / 已购 key 构造（Redis Cluster 适配）----
+    // EVAL 多 KEYS 必须落在同一 slot（否则 CROSSSLOT），故用 {act:{activityId}} 哈希标签圈住活动 id，
+    // 保证同活动的 stock / bought 两个 key 落在同一 slot；单机 Redis 行为等价，key 只是换了命名。
+    /** 秒杀库存计数 key（Lua KEYS[1]）：seckill:{act:{id}}:stock */
+    public static String seckillStockKey(Long activityId) {
+        return "seckill:{act:" + activityId + "}:stock";
+    }
+
+    /** 秒杀已购数量 hash key（Lua KEYS[2]）：seckill:{act:{id}}:bought */
+    public static String seckillBoughtKey(Long activityId) {
+        return "seckill:{act:" + activityId + "}:bought";
+    }
     /** 秒杀活动列表缓存 key（全量列表，60 秒短 TTL 应对状态时间流转） */
     public static final String SECKILL_LIST_KEY = CACHE_PREFIX + "seckill:list";
     /** 秒杀活动详情缓存 key 前缀，完整 key = SECKILL_DETAIL_KEY_PREFIX + activityId */

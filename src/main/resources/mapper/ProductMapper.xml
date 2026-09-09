@@ -166,6 +166,35 @@
         FROM product
         WHERE deleted = 0
     </select>
+    <select id="selectAllForSearch" resultType="com.mall.vo.ProductListVO">
+        SELECT
+            p.id, p.category_id, p.product_name, p.sub_title, p.main_image,
+            IFNULL(s.min_price, 0) AS min_price,
+            IFNULL(s.max_price, 0) AS max_price,
+            IFNULL(s.sales, 0)     AS sales
+        FROM product p
+                 LEFT JOIN (
+            SELECT product_id, MIN(price) AS min_price, MAX(price) AS max_price, SUM(sales) AS sales
+            FROM product_sku WHERE deleted = 0 AND status = 1 GROUP BY product_id
+        ) s ON s.product_id = p.id
+        WHERE p.deleted = 0 AND p.status = 1
+        ORDER BY p.id ASC
+        LIMIT #{offset}, #{limit}
+    </select>
+    <select id="selectAllForSearchById" resultType="com.mall.vo.ProductListVO" parameterType="java.lang.Long">
+        SELECT
+            p.id, p.category_id, p.product_name, p.sub_title, p.main_image,
+            IFNULL(s.min_price, 0) AS min_price,
+            IFNULL(s.max_price, 0) AS max_price,
+            IFNULL(s.sales, 0)     AS sales
+        FROM product p
+                 LEFT JOIN (
+            SELECT product_id, MIN(price) AS min_price, MAX(price) AS max_price, SUM(sales) AS sales
+            FROM product_sku WHERE deleted = 0 AND status = 1 GROUP BY product_id
+        ) s ON s.product_id = p.id
+        WHERE p.deleted = 0 AND p.status = 1
+          AND p.id = #{productId}
+    </select>
 
 
 </mapper>

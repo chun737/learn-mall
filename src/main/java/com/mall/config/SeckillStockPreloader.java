@@ -44,7 +44,7 @@ public class SeckillStockPreloader implements ApplicationRunner {
         int preloaded = 0;
         int skipped = 0;
         for (SeckillActivity activity : activities) {
-            String key = Constants.SECKILL_STOCK_PREFIX + activity.getId();
+            String key = Constants.seckillStockKey(activity.getId());
             // setIfAbsent = SETNX：key 不存在才写入，已存在不覆盖（保留已消耗库存）
             Boolean absent = redisTemplate.opsForValue().setIfAbsent(key, activity.getAvailableStock());
             if (Boolean.TRUE.equals(absent)) {

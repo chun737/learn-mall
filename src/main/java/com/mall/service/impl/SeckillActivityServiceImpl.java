@@ -34,7 +34,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.mall.common.Constants.SECKILL_BOUGHT_PREFIX;
 import static com.mall.enums.ErrorCode.*;
 
 /**
@@ -182,8 +181,8 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         }
         Long userId = SecurityUtils.getUserId();
         // KEYS[1] 必须是库存 key（脚本对它 GET/DECRBY），传详情缓存 key 会把缓存当库存扣坏
-        String key1 = Constants.SECKILL_STOCK_PREFIX + id;
-        String key2 = SECKILL_BOUGHT_PREFIX + id;
+        String key1 = Constants.seckillStockKey(id);
+        String key2 = Constants.seckillBoughtKey(id);
         int perLimit = activity.getPerLimit() != null && activity.getPerLimit() > 0 ? activity.getPerLimit() : 1;
         // ARGV 用 StringRedisSerializer：GenericJacksonJsonRedisSerializer 默认带 @class 类型信息，
         // 会把 "1" 序列化成 "java.lang.String":"\"1\""，Lua 端 tonumber('"1"') 返回 nil → 触发 -3（参数非法）。
@@ -222,7 +221,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
             // 否则 Lua 已扣的库存永远不释放，活动会被"幽灵"扣空（即使后面 MQ 修好，库存也回不来了）。
             // 抛业务异常让前端看到"系统繁忙"，但库存已回补，不影响后续请求
             log.error("秒杀 MQ 发送失败，活动={}, userId={}", id, userId, e);
-            redisTemplate.opsForValue().increment(Constants.SECKILL_STOCK_PREFIX + id, quantity);
+            redisTemplate.opsForValue().increment(Constants.seckillStockKey(id), quantity);
             throw new BusinessException(SYSTEM_ERROR);
         }
         SeckillResultVO vo = new SeckillResultVO();
@@ -357,16 +356,16 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         // 3. 预热：库存计数、清已购容器、布隆放行、逐出 C 端列表缓存（新活动立刻可见）
         try {
             redisTemplate.opsForValue().set(
-                    Constants.SECKILL_STOCK_PREFIX + activity.getId(), activity.getAvailableStock());
-            redisTemplate.delete(SECKILL_BOUGHT_PREFIX + activity.getId());
+                    Constants.seckillStockKey(activity.getId()), activity.getAvailableStock());
+            redisTemplate.delete(Constants.seckillBoughtKey(activity.getId()));
             bloomFilterRegistry.add(Constants.BLOOM_FILTER_SECKILL, activity.getId());
             redisTemplate.delete(Constants.SECKILL_LIST_KEY);
         } catch (Exception e) {
             // 预热失败=活动在 Redis 层不可抢（Lua 对 key 不存在一律拒绝），此时不应允许创建：
             // 抛出让 DB 回滚，并清除可能已写入的半成品 key（写库成功但提交前的数据不对外可见，可安全清）
             try {
-                redisTemplate.delete(Constants.SECKILL_STOCK_PREFIX + activity.getId());
-                redisTemplate.delete(SECKILL_BOUGHT_PREFIX + activity.getId());
+                redisTemplate.delete(Constants.seckillStockKey(activity.getId()));
+                redisTemplate.delete(Constants.seckillBoughtKey(activity.getId()));
             } catch (Exception ignored) {
             }
             throw new BusinessException(SYSTEM_ERROR);
@@ -397,8 +396,8 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
     @Override
     public void stopSeckill(Long id) {
         // 1. 删除购买路径的 Redis 数据：stock 没了 Lua 立即快速失败，bought 顺带清容器
-        redisTemplate.delete(Constants.SECKILL_STOCK_PREFIX + id);
-        redisTemplate.delete(SECKILL_BOUGHT_PREFIX + id);
+        redisTemplate.delete(Constants.seckillStockKey(id));
+        redisTemplate.delete(Constants.seckillBoughtKey(id));
         // 2. 逐出详情/列表缓存：否则最长 60 秒内页面仍显示"进行中 + 倒计时"
         redisTemplate.delete(Constants.SECKILL_DETAIL_KEY_PREFIX + id);
         redisTemplate.delete(Constants.SECKILL_LIST_KEY);
@@ -416,7 +415,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
      */
     private void overlayReconcileStock(SeckillAdminVO vo) {
         try {
-            Object stock = redisTemplate.opsForValue().get(Constants.SECKILL_STOCK_PREFIX + vo.getId());
+            Object stock = redisTemplate.opsForValue().get(Constants.seckillStockKey(vo.getId()));
             if (stock instanceof Number n) {
                 vo.setRedisStock(n.intValue());
             } else if (stock instanceof String s && !s.isBlank()) {
@@ -497,7 +496,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
      */
     private void overlayLiveStock(SeckillActivityVO vo) {
         try {
-            Object stock = redisTemplate.opsForValue().get(Constants.SECKILL_STOCK_PREFIX + vo.getId());
+            Object stock = redisTemplate.opsForValue().get(Constants.seckillStockKey(vo.getId()));
             if (stock instanceof Number n) {
                 vo.setAvailableStock(n.intValue());
             } else if (stock instanceof String s && !s.isBlank()) {

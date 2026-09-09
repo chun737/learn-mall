@@ -64,4 +64,10 @@ public interface ProductMapper extends BaseMapper<Product> {
      * 逻辑删除商品下的所有 SKU（与 deleteProduct 在同一事务中执行）
      */
     void deleteProductSkus(@Param("id") Long id);
+    /** ES 全量同步：分页取上架商品（含价格区间、销量） */
+    List<ProductListVO> selectAllForSearch(@Param("offset") int offset,
+                                           @Param("limit") int limit);
+
+    /** ES 同步单条 */
+    List<ProductListVO> selectAllForSearchById(@Param("productId") Long productId);
 }

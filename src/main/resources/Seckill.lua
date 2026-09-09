@@ -1,8 +1,8 @@
 ---@diagnostic disable: undefined-global
 --@diagnostic disable: undefined-global
 --- 秒杀原子预扣脚本
---- KEYS[1] = seckill:stock:{id}    库存计数（string，须预先 SET totalStock）
---- KEYS[2] = seckill:bought:{id}   已购数量（hash，field=userId，value=已购件数）
+--- KEYS[1] = seckill:{act:{id}}:stock    库存计数（string，须预先 SET totalStock）
+--- KEYS[2] = seckill:{act:{id}}:bought   已购数量（hash，field=userId，value=已购件数）
 --- ARGV[1] = userId
 --- ARGV[2] = 本次购买数量
 --- ARGV[3] = perLimit 每人限购数量

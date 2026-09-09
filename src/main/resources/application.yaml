@@ -15,7 +15,11 @@ spring:
   servlet:
     multipart:
       max-file-size: 10MB          # 单文件上限（覆盖默认 1MB，与 OSS 5MB 校验留有裕量）
-      max-request-size: 10MB       # 单次请求总大小
+      max-request-size: 10MB # 单次请求总大小
+  elasticsearch:
+    uris: http://192.168.10.8:9200
+    connection-timeout: 5s
+    socket-timeout: 30s
 
 
 mybatis-plus:
