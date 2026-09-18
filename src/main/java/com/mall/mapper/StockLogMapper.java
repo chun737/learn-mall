@@ -39,4 +39,9 @@ public interface StockLogMapper extends BaseMapper<StockLog> {
      * 单 SKU 库存流水：按 SKU ID 分页查询（配合 PageHelper）
      */
     List<StockLogVO> selectBySkuId(@Param("skuId") Long skuId);
+
+    /**
+     * 批量插入库存流水：秒杀批量建单用（SQL 在 XML 里 foreach 实现）
+     */
+    int insertBatch(@Param("list") List<StockLog> logs);
 }

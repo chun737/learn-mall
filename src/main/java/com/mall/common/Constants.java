@@ -1,6 +1,9 @@
 package com.mall.common;
 
+import org.springframework.data.redis.core.RedisTemplate;
+
 import java.time.Duration;
+import java.time.LocalDateTime;
 
 /**
  * 全局常量类：集中管理项目中的魔法值，避免硬编码
@@ -22,6 +25,76 @@ public final class Constants {
     public static final String ROLE_PREFIX = "ROLE_";
     /*图片上传*/
     public static final Long  MAX_IMAGE_SIZE = 5 * 1024 * 1024L;
+
+    // ---- 图片真实格式（魔数）识别 ----
+    // 只校验扩展名挡不住"改名攻击"：把任意二进制文件命名成 evil.png 即可通过。
+    // 这里以文件头魔数为准判定真实格式，登记表是「识别 + 白名单 + 派生元数据」的单一数据源。
+    /** 各格式的文件头魔数（含偏移量）：{偏移，期望字节}；WebP 需要同时匹配 RIFF 与 WEBP 两段 */
+    private static final int[][] MAGIC_JPEG = {{0, 0xFF}, {1, 0xD8}, {2, 0xFF}};
+    private static final int[][] MAGIC_PNG  = {{0, 0x89}, {1, 0x50}, {2, 0x4E}, {3, 0x47},
+                                              {4, 0x0D}, {5, 0x0A}, {6, 0x1A}, {7, 0x0A}};
+    private static final int[][] MAGIC_GIF  = {{0, 'G'}, {1, 'I'}, {2, 'F'}, {3, '8'}};
+    private static final int[][] MAGIC_WEBP = {{0, 'R'}, {1, 'I'}, {2, 'F'}, {3, 'F'},
+                                              {8, 'W'}, {9, 'E'}, {10, 'B'}, {11, 'P'}};
+    private static final int[][] MAGIC_BMP  = {{0, 'B'}, {1, 'M'}};
+    /** 魔数签名探测所需的最小长度（webp 的 WEBP 段在偏移 8~11，取 12 覆盖全部格式） */
+    private static final int MAGIC_PROBE_LENGTH = 12;
+    /** 允许扩展名的别名 → 规范扩展名（jpeg 图常见两种写法；服务端统一存 jpg） */
+    private static final java.util.Map<String, String> IMAGE_EXT_ALIAS = java.util.Map.of(
+            "jpg", "jpg", "jpeg", "jpg", "png", "png", "gif", "gif", "webp", "webp", "bmp", "bmp");
+
+    /** 全部允许的扩展名（含别名），用于错误提示文案 */
+    public static final String ALLOWED_IMAGE_EXT_TEXT = String.join("/", IMAGE_EXT_ALIAS.keySet());
+
+    /**
+     * 按文件头魔数识别图片真实格式。
+     * <p>以魔数为准而不是扩展名：改名成 .png 的任意文件在这里会被判为"不是图片"。
+     *
+     * @param head 文件头部字节；长度不足 {@link #MAGIC_PROBE_LENGTH} 时不可能是有效图片，返回 null
+     * @return 规范扩展名（jpg/png/gif/webp/bmp）；无法识别为受支持图片时返回 null
+     */
+    public static String detectImageExt(byte[] head) {
+        if (head == null || head.length < MAGIC_PROBE_LENGTH) {
+            return null;
+        }
+        if (matches(head, MAGIC_JPEG)) return "jpg";
+        if (matches(head, MAGIC_PNG))  return "png";
+        if (matches(head, MAGIC_GIF))  return "gif";
+        if (matches(head, MAGIC_WEBP)) return "webp";
+        if (matches(head, MAGIC_BMP))  return "bmp";
+        return null;
+    }
+
+    /** 把客户端传来的扩展名规范化为登记表里的写法（jpeg → jpg）；不在白名单返回 null */
+    public static String normalizeImageExt(String ext) {
+        return (ext == null) ? null : IMAGE_EXT_ALIAS.get(ext.trim().toLowerCase());
+    }
+
+    /** 规范扩展名 → 写入 OSS 对象元数据的 Content-Type；未知格式按二进制流处理 */
+    public static String imageContentType(String canonicalExt) {
+        if (canonicalExt == null) {
+            return "application/octet-stream";
+        }
+        return switch (canonicalExt) {
+            case "jpg"  -> "image/jpeg";
+            case "png"  -> "image/png";
+            case "gif"  -> "image/gif";
+            case "webp" -> "image/webp";
+            case "bmp"  -> "image/bmp";
+            default     -> "application/octet-stream";
+        };
+    }
+
+    /** 魔数比对：登记表里每个偏移都必须命中 */
+    private static boolean matches(byte[] head, int[][] magic) {
+        for (int[] pair : magic) {
+            int offset = pair[0];
+            if (offset >= head.length || (head[offset] & 0xFF) != pair[1]) {
+                return false;
+            }
+        }
+        return true;
+    }
     // ==================== Redis ====================
     /** 登录 token 白名单 key 前缀 */
     public static final String LOGIN_TOKEN_PREFIX = "login:token:";
@@ -86,6 +159,64 @@ public final class Constants {
     public static final Duration TTL_COUPON_RECEIVABLE = Duration.ofMinutes(5);
     public static final Duration TTL_SECKILL_LIST = Duration.ofSeconds(60);
     public static final Duration TTL_SECKILL_DETAIL = Duration.ofSeconds(60);
+    /**
+     * 秒杀库存/bought 两个 key 的存活余量：过期时刻 = 活动 end_time + 本缓冲。
+     * <p>为什么要给它们设过期：原先这两个 key 是"永久 key"，活动自然结束后没人 DEL 就永久滞留，
+     * bought 哈希还会随参与人数持续增长——活动越多、参与越多，Redis 内存只增不减。
+     * <p>为什么加缓冲而不是严格按 end_time 过期：活动刚结束的瞬间仍可能有「回补库存」
+     * （取消/超时/退款）与「对账读 redisStock」在跑，早过期会让这些操作读到"key 不存在"而跳过。
+     */
+    public static final Duration SECKILL_KEY_TTL_BUFFER = Duration.ofHours(2);
+    /**
+     * 兜底 TTL：活动的 end_time 为空时使用。
+     * <p>用途是"时间字段不可信"时的安全网——宁可多留一天，也不能让 key 立刻消失导致进行中的活动被判为"未预热"而拒单。
+     * <p>注意：活动"即将结束"（例如还剩 30 秒）不需要兜底，因为 {@code end_time + 缓冲} 本身就已经落在未来。
+     */
+    public static final Duration SECKILL_KEY_TTL_FALLBACK = Duration.ofHours(24);
+
+    /**
+     * 计算秒杀 stock / bought 两个 key 的存活时长，用于 {@code set(k, v, Duration)} / {@code setIfAbsent(k, v, Duration)}。
+     * <p>语义是"从现在起，到活动结束时刻 + 缓冲 为止"还剩多久（相对时长，而非绝对时刻），
+     * 因为 RedisTemplate 的写入 API 收的是 TTL 而不是过期时间点。
+     *
+     * <p>三种情形：
+     * <ul>
+     *   <li>正常活动 → {@code end_time + 缓冲}，与活动窗口对齐，活动结束后自动回收；</li>
+     *   <li>创建时 end_time 已过期（历史活动被重新预热等）→ {@code end_time + 缓冲} 仍在未来，
+     *       通常是"缓冲剩余量"，可接受；</li>
+     *   <li>end_time 为 null（脏数据）→ 用兜底的 {@link #SECKILL_KEY_TTL_FALLBACK}。</li>
+     * </ul>
+     *
+     * @param endTime 活动结束时间，可为 null
+     * @return 相对存活时长，恒为正
+     */
+    public static Duration seckillKeyTtl(LocalDateTime endTime) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expireAt = (endTime == null)
+                ? now.plus(SECKILL_KEY_TTL_FALLBACK)
+                : endTime.plus(SECKILL_KEY_TTL_BUFFER);
+        // 防御：万一算出来已过期（极端时钟回拨/脏数据），也要给一个正的下限，避免立刻过期把进行中的活动打挂
+        return expireAt.isAfter(now) ? Duration.between(now, expireAt) : SECKILL_KEY_TTL_FALLBACK;
+    }
+
+    /**
+     * 刷新已存在 key 的过期时间（不存在则什么都不做，<b>绝不创建 key</b>）。
+     *
+     * <p>专用于"回补/补偿"这类 {@code INCRBY} 写入之后：INCRBY 对不存在的 key 会创建一个<b>永久 key</b>，
+     * 所以顺手把过期时间补上，避免秒杀 key 重新变成永久 key。
+     * 这里不查活动的真实 end_time（补偿路径不该额外查库），统一用兜底 TTL——
+     * key 若已存在，其过期时间本来就是"活动结束 + 缓冲"算出来的，这里只延长一点点，语义上仍然正确；
+     * 若 key 恰好刚过期被重建，兜底 TTL 会限制它在有限时间内被回收，不会变成永久 key。
+     *
+     * @return true = 刷新了（key 本来存在）；false = key 不存在，未做任何操作
+     */
+    public static boolean refreshSeckillKeyTtl(RedisTemplate<String, Object> redisTemplate, String key) {
+        if (!Boolean.TRUE.equals(redisTemplate.hasKey(key))) {
+            return false;
+        }
+        redisTemplate.expire(key, SECKILL_KEY_TTL_FALLBACK);
+        return true;
+    }
 
     // ==================== 布隆过滤器参数 ====================
     /** 商品 ID 布隆过滤器预期元素量（宁大勿小：超出会推高误判率，只是多占内存） */

@@ -48,4 +48,16 @@
         ORDER BY created_at DESC, id DESC
     </select>
 
+    <!-- 批量插入库存流水：秒杀批量建单用，before/after 为批内推算值 -->
+    <insert id="insertBatch">
+        INSERT INTO stock_log
+            (sku_id, order_id, order_no, change_type, change_qty,
+             before_stock, after_stock, created_at)
+        VALUES
+        <foreach collection="list" item="it" separator=",">
+            (#{it.skuId}, #{it.orderId}, #{it.orderNo}, #{it.changeType}, #{it.changeQty},
+             #{it.beforeStock}, #{it.afterStock}, #{it.createdAt})
+        </foreach>
+    </insert>
+
 </mapper>

@@ -20,6 +20,8 @@ import com.mall.util.BloomFilterRegistry;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mall.util.SecurityUtils;
 import com.mall.vo.*;
+import org.apache.rocketmq.client.producer.SendCallback;
+import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,7 @@ import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,6 +49,10 @@ import static com.mall.enums.ErrorCode.*;
  * - 活动状态由时间窗口（start/end 与 now 比较）实时计算，不用 DB 的 status 字段
  *   （没有定时任务流转它，读它必然失真）；
  * - availableStock 不走缓存（缓存值滞后），每条实时读 Redis 预扣计数，DB 值兜底。
+ *   两处库存的分工：Redis 是"预扣"（Lua 原子扣减，抢购准入的唯一权威）；
+ *   DB 的 available_stock 由 MQ 消费者在建单成功后异步扣减（OrderServiceImpl.addSeckillOrderBatch），
+ *   并在取消/超时/退款时由 SeckillStockRestorer 同步回补。
+ *   两者差值 = 已预扣但尚未建单的部分（消费有秒级延迟），后台对账页明显偏离即说明消费者积压或回补异常。
  *
  * 数据库访问走 SeckillActivityMapper.xml 的 SQL（项目规范：CRUD 只用 SQL 语句）。
  *
@@ -209,25 +216,64 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         //利用rocketmq异步解耦支付与秒杀
         SeckillOrderMessage msg = new SeckillOrderMessage();
         msg.setActivityId(id);
+        // ⭐ 收货地址必须随消息带过去：消费者建单要用它写收货人快照，并做「地址归属 == 下单人」防越权校验。
+        //    漏传时 addressMap.get(null) 恒为 null → 每笔秒杀单都命中"地址非法"分支：回补库存 + 标 FAILED，
+        //    表现就是"抢到了却永远建不了单"，秒杀功能整体不可用。
+        msg.setAddressId(addressId);
+        // ⭐ 成交单价随消息带过去（活动秒杀价）：消费者只按 skuId 拿到 SKU 原价，
+        //    不带这个字段就会用原价结算，秒杀价形同虚设、用户按原价付款。
+        //    随消息携带让消费者零额外查询（批内 N 条仍是 0 次查活动表）。
+        msg.setSeckillPrice(activity.getSeckillPrice());
         msg.setQuantity(quantity);
         msg.setCouponId(couponId);
         msg.setUserId(userId);
         msg.setSkuId(activity.getSkuId());
         msg.setOrderNo(String.valueOf(snowflakeIdGenerator.nextId()));
+        // 异步发送：发送线程不等 Broker 确认，抢购请求立即返回"排队中"。
+        // 发送结果走回调线程——那时 HTTP 响应早已返回，onException 无法再抛异常给前端，
+        // 只能把失败写进 Redis（用户轮询 getResult 能看到"下单失败"）并回补资源。
+        // 同步阶段（producer 已关闭/参数非法等）仍走 catch 抛给前端，此时请求还在处理中
         try {
-            rocketMQTemplate.convertAndSend("seckill-order-topic", msg);
+            rocketMQTemplate.asyncSend("seckill-order-topic", msg, new SendCallback() {
+                @Override
+                public void onSuccess(SendResult sendResult) {
+                    // 发送成功：后续由消费者建单并写结果，无需处理
+                }
+
+                @Override
+                public void onException(Throwable e) {
+                    compensateSendFailure(id, userId, quantity, e);
+                }
+            });
         } catch (Exception e) {
-            // MQ 发送失败（broker 不可达/超时/路由异常）：必须回补 Redis 库存，
-            // 否则 Lua 已扣的库存永远不释放，活动会被"幽灵"扣空（即使后面 MQ 修好，库存也回不来了）。
-            // 抛业务异常让前端看到"系统繁忙"，但库存已回补，不影响后续请求
-            log.error("秒杀 MQ 发送失败，活动={}, userId={}", id, userId, e);
-            redisTemplate.opsForValue().increment(Constants.seckillStockKey(id), quantity);
+            compensateSendFailure(id, userId, quantity, e);
             throw new BusinessException(SYSTEM_ERROR);
         }
         SeckillResultVO vo = new SeckillResultVO();
         vo.setSeckillResult(Constants.SECKILL_RESULT_QUEUING);  // 0 = 排队中
         vo.setSeckillResultText("排队中");
         return vo;
+    }
+
+    /**
+     * MQ 发送失败的兜底：回补库存 + 回退已购数 + 标记 FAILED。
+     * 回调线程里抛出的异常无人接收，所以全程不抛、只记日志：
+     * - 不回补库存：Lua 已扣的库存永远不释放，活动被"幽灵"扣空；
+     * - 不回退已购数：用户被限购拦住，无法再抢；
+     * - 不标 FAILED：用户轮询 getResult 永远停在"排队中"。
+     */
+    private void compensateSendFailure(Long activityId, Long userId, Integer quantity, Throwable cause) {
+        log.error("秒杀 MQ 发送失败，活动={}, userId={}", activityId, userId, cause);
+        try {
+            String stockKey = Constants.seckillStockKey(activityId);
+            redisTemplate.opsForValue().increment(stockKey, quantity);
+            // INCRBY 对不存在的 key 会创建一个永久 key：这里顺手补 TTL，防止秒杀库存 key 永久滞留
+            Constants.refreshSeckillKeyTtl(redisTemplate, stockKey);
+            redisTemplate.opsForHash().increment(Constants.seckillBoughtKey(activityId), userId, -quantity);
+            redisTemplate.opsForHash().put(Constants.SECKILL_RESULT_PREFIX + activityId, userId.toString(), "FAILED");
+        } catch (Exception e) {
+            log.error("秒杀 MQ 发送失败补偿也失败，活动={}, userId={}", activityId, userId, e);
+        }
     }
 
     /**
@@ -355,8 +401,11 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
 
         // 3. 预热：库存计数、清已购容器、布隆放行、逐出 C 端列表缓存（新活动立刻可见）
         try {
+            // TTL = 到活动 end_time + 缓冲 的剩余时长：活动结束后库存 key 自动回收，不再永久滞留。
+            // （原先无 TTL，活动自然结束后若无人调 stopSeckill，这两个 key 会一直留在 Redis 里）
+            Duration ttl = Constants.seckillKeyTtl(activity.getEndTime());
             redisTemplate.opsForValue().set(
-                    Constants.seckillStockKey(activity.getId()), activity.getAvailableStock());
+                    Constants.seckillStockKey(activity.getId()), activity.getAvailableStock(), ttl);
             redisTemplate.delete(Constants.seckillBoughtKey(activity.getId()));
             bloomFilterRegistry.add(Constants.BLOOM_FILTER_SECKILL, activity.getId());
             redisTemplate.delete(Constants.SECKILL_LIST_KEY);
@@ -492,7 +541,10 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
 
     /**
      * 剩余库存实时装饰：GET seckill:stock:{id}。
-     * 秒杀预扣上线前 key 不存在 → 保留 SQL 查出的 DB 值；Redis 值优先因为它反映预扣后的真实余量。
+     * Redis 值优先，因为它还包含"已预扣但尚未建单"的部分（消费者异步落库有秒级延迟），
+     * 比 DB 的 available_stock 更贴近用户视角的真实余量。
+     * key 不存在（未预热/活动已终止被清理）或 Redis 故障时，保留 SQL 查出的 DB 值兜底——
+     * DB 值现在也会随建单/取消/退款一起变动，两者互为参照。
      */
     private void overlayLiveStock(SeckillActivityVO vo) {
         try {

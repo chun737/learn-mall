@@ -40,10 +40,18 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <!-- Netty：只引真正用到的模块，不再用 netty-all。
+             netty-all 会把 epoll/kqueue/openssl 等全部实现打进包，还会用写死的版本号
+             盖掉 spring-boot 管理的版本 —— 而 lettuce(redis) 与 redisson 也用 netty，
+             版本不一致容易出现难查的问题。这里交给 parent 统一管版本。
+             下面两个模块已传递引入 netty-transport / netty-buffer / netty-common。 -->
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
-            <version>4.1.109.Final</version>
+            <artifactId>netty-codec-http</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

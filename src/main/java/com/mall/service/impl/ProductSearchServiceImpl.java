@@ -108,7 +108,7 @@ public class ProductSearchServiceImpl implements IProductSearchService {
         if (categoryId != null) {
             bool.filter(f -> f.term(t -> t.field("categoryId").value(categoryId)));
         }
-        Query query = new Query.Builder().bool(bool).build();
+        Query query = new Query.Builder().bool(bool.build()).build();
 
         // 2. 执行搜索
         try {

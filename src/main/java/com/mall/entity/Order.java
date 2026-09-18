@@ -23,7 +23,11 @@ import lombok.experimental.Accessors;
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@TableName("order")
+// ⚠️ order 是 MySQL 保留字，表名必须用反引号包起来。
+// MyBatis-Plus 的自动方法（insert / selectById / updateById…）会把这个值原样拼进 SQL，
+// 不转义就会生成 "INSERT INTO order (...)" → BadSqlGrammarException: bad SQL grammar。
+// 手写的 OrderMapper.xml 里一直写着 `order`，注解这里漏了，导致只有 MP 自动方法会挂。
+@TableName("`order`")
 public class Order implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -159,6 +163,17 @@ public class Order implements Serializable {
      */
     @TableField("updated_at")
     private LocalDateTime updatedAt;
+
+    /**
+     * 订单来源：0=普通订单 1=秒杀订单（取值见 Constants.ORDER_SOURCE_*）
+     * <p>
+     * 为什么必须标记：取消/超时/退款要判断「这笔单是否占用了秒杀活动库存」。
+     * 详情页入口的商品也可能同时挂着活动，若不加标记，任何「SKU 恰好有活动、
+     * 且下单时间落在活动时间窗内」的普通订单被取消时都会被误判成秒杀单，
+     * 白白回补一次秒杀库存 → 秒杀库存虚增（超卖）。
+     */
+    @TableField("order_source")
+    private Integer orderSource;
 
     /**
      * 逻辑删除：0=未删除 1=已删除（用户端删除，后台仍可查）

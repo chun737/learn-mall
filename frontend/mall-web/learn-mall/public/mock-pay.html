@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>模拟收银台</title>
+  <!--
+    ⭐ 模拟支付窗口（第三方收银台的替身）
+
+    谁在用它：
+      后端 MockPayChannelServiceImpl.createPayParams() 返回的跳转地址就是
+        /mock-pay.html?paymentNo=xxx&amount=xxx&subject=xxx
+      前端收银台（PayDialog.vue）拿到这个地址后 window.location.assign() 跳过来，本页接管付款流程。
+
+    为什么放在【前端 public/】而不是后端 static/：
+      后端返回的是【相对路径】/mock-pay.html，浏览器会基于当前源解析成
+        http://localhost:5173/mock-pay.html      ← 前端 public/ ✅
+      而如果放后端 static/，就是
+        http://localhost:8080/mock-pay.html      ← 跨源 ⚠️
+      跨源会导致本页读不到 localStorage 里的登录 token（localStorage 按源隔离），
+      也就没法调用需要登录的 /payment/mock/pay 接口。
+      放前端 public/ 则与 SPA 同源，token 直接可用，后端的相对路径返回也不用改。
+
+    为什么用原生 HTML 而不是 Vue 页面：
+      它模拟的是"第三方"收银台，本就不该跑在我们的 SPA 里；
+      跳转过来时 SPA 已经卸载，用独立页面更贴近真实支付跳转的形态。
+
+    生产环境：npm run build 会把 public/ 的内容原样拷到 dist/ 根目录，
+      部署后 /mock-pay.html 依然可用，无需任何改动。
+  -->
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(160deg, #eef3fb 0%, #f7f9fc 60%, #fdf2f1 100%);
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(23, 43, 77, 0.12);
+      overflow: hidden;
+    }
+
+    /* ===== 顶部：模拟支付渠道标识 ===== */
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 18px;
+      background: #1677ff;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .brand .dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+    .brand .mock-tag {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 400;
+      background: rgba(255, 255, 255, 0.22);
+      border-radius: 10px;
+      padding: 2px 8px;
+    }
+
+    .body { padding: 22px 20px 24px; }
+
+    /* ===== 金额区 ===== */
+    .label {
+      margin: 0;
+      font-size: 12px;
+      color: #8a94a6;
+      text-align: center;
+    }
+    .amount {
+      margin: 8px 0 6px;
+      text-align: center;
+      font-size: 38px;
+      font-weight: 700;
+      color: #1f2d3d;
+      line-height: 1.1;
+      word-break: break-all;
+    }
+    .amount i { font-style: normal; font-size: 20px; margin-right: 2px; }
+    .subject {
+      margin: 0 0 4px;
+      text-align: center;
+      font-size: 13px;
+      color: #4a5568;
+      word-break: break-all;
+    }
+    .payment-no {
+      margin: 0;
+      text-align: center;
+      font-size: 12px;
+      color: #a0aab8;
+      word-break: break-all;
+    }
+
+    /* ===== 信息行 ===== */
+    .info {
+      margin: 18px 0 0;
+      border-top: 1px dashed #e8ecf1;
+      padding-top: 14px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      color: #4a5568;
+      padding: 5px 0;
+    }
+    .info-row span:first-child { color: #8a94a6; flex-shrink: 0; }
+    .info-row span:last-child { text-align: right; word-break: break-all; }
+
+    /* ===== 提示条 ===== */
+    .notice {
+      margin: 16px 0 0;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #a15c00;
+      background: #fff8e6;
+      border: 1px solid #ffe7a3;
+      border-radius: 8px;
+    }
+
+    /* ===== 按钮 ===== */
+    .btn {
+      width: 100%;
+      height: 46px;
+      margin-top: 18px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      background: #1677ff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover:not(:disabled) { background: #0e5fd8; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn.ghost {
+      margin-top: 10px;
+      height: 42px;
+      font-size: 14px;
+      font-weight: 400;
+      color: #6b7280;
+      background: #fff;
+      border: 1px solid #dfe4ea;
+    }
+    .btn.ghost:hover:not(:disabled) { background: #f7f9fc; color: #1f2d3d; }
+
+    /* ===== 结果态 ===== */
+    .result { text-align: center; padding: 34px 20px 30px; }
+    .result .icon {
+      width: 60px;
+      height: 60px;
+      margin: 0 auto 16px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      color: #fff;
+    }
+    .result .icon.ok { background: #22a06b; }
+    .result .icon.bad { background: #e1251b; }
+    .result h2 { margin: 0 0 10px; font-size: 19px; color: #1f2d3d; }
+    .result p { margin: 6px 0; font-size: 13px; color: #6b7280; word-break: break-all; }
+    .result .tip { margin-top: 14px; font-size: 12px; color: #a0aab8; }
+
+    .spin {
+      width: 34px;
+      height: 34px;
+      margin: 26px auto 14px;
+      border: 3px solid #e8ecf1;
+      border-top-color: #1677ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .center { text-align: center; padding: 34px 20px 30px; }
+    .center p { margin: 0; font-size: 14px; color: #6b7280; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <span class="dot">￥</span>
+      <span>模拟收银台</span>
+      <span class="mock-tag">演示环境</span>
+    </div>
+
+    <!-- ===== 待付款 ===== -->
+    <div class="body" id="view-pay">
+      <p class="label">付款金额</p>
+      <p class="amount"><i>¥</i><span id="amount">0.00</span></p>
+      <p class="subject" id="subject">订单支付</p>
+      <p class="payment-no">支付单号 <span id="paymentNo">-</span></p>
+
+      <div class="info">
+        <div class="info-row"><span>收款方</span><span>学习商城（演示）</span></div>
+        <div class="info-row"><span>支付方式</span><span>模拟支付</span></div>
+      </div>
+
+      <p class="notice">
+        ⚠️ 这是后端 <code>MockPayChannelServiceImpl</code> 指定的模拟收银台，
+        不会产生任何真实扣款。点「确认付款」等价于"用户在第三方收银台完成付款"，
+        后端会把支付单与订单都置为已支付。
+      </p>
+
+      <button class="btn" id="btn-pay">确认付款</button>
+      <button class="btn ghost" id="btn-cancel">取消支付</button>
+    </div>
+
+    <!-- ===== 付款中 ===== -->
+    <div class="center hidden" id="view-loading">
+      <div class="spin"></div>
+      <p>正在处理付款，请稍候…</p>
+    </div>
+
+    <!-- ===== 结果 ===== -->
+    <div class="result hidden" id="view-result">
+      <div class="icon ok" id="result-icon">✓</div>
+      <h2 id="result-title">支付成功</h2>
+      <p id="result-amount"></p>
+      <p id="result-paymentNo"></p>
+      <p class="tip" id="result-tip">正在返回商城…</p>
+      <button class="btn ghost hidden" id="btn-back">返回商城</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      /** 与 utils/auth.ts 里的 TOKEN_KEY 保持一致 */
+      var TOKEN_KEY = 'mall_token';
+      /** 前端跳转过来时写入的"付完款跳回哪"，同源共享 sessionStorage */
+      var RETURN_KEY = 'mockPay:return';
+      /** 拿不到返回地址时的兜底：订单列表 */
+      var FALLBACK = '/orders';
+
+      var params = new URLSearchParams(location.search);
+      var paymentNo = params.get('paymentNo') || '';
+      var amount = Number(params.get('amount') || 0);
+      var subject = params.get('subject') || '订单支付';
+
+      var $ = function (id) { return document.getElementById(id); };
+      var views = {
+        pay: $('view-pay'),
+        loading: $('view-loading'),
+        result: $('view-result')
+      };
+
+      function show(name) {
+        Object.keys(views).forEach(function (k) {
+          views[k].classList.toggle('hidden', k !== name);
+        });
+      }
+
+      function money(v) { return Number(v || 0).toFixed(2); }
+
+      /** 回到商城：用 replace 而非 href —— 避免用户按浏览器后退又回到收银台重复付款 */
+      function goBack(keepReturnUrl) {
+        var saved = sessionStorage.getItem(RETURN_KEY);
+        if (!keepReturnUrl) {
+          sessionStorage.removeItem(RETURN_KEY);
+        }
+        // ⭐ replace：不往历史栈里塞记录，用户后退不会退回支付页
+        location.replace(keepReturnUrl && saved ? saved : FALLBACK);
+      }
+
+      // ---- 渲染初始数据 ----
+      if (!paymentNo) {
+        // 直接手敲地址进来（没带支付单号）：没什么可付的，直接回商城
+        goBack(false);
+        return;
+      }
+      $('amount').textContent = money(amount);
+      $('subject').textContent = subject;
+      $('paymentNo').textContent = paymentNo;
+
+      // ---- 确认付款 ----
+      $('btn-pay').addEventListener('click', function () {
+        doPay();
+      });
+
+      async function doPay() {
+        show('loading');
+        try {
+          var token = localStorage.getItem(TOKEN_KEY) || '';
+          var res = await fetch(
+            '/api/payment/mock/pay?paymentNo=' + encodeURIComponent(paymentNo),
+            {
+              method: 'POST',
+              headers: token ? { Authorization: 'Bearer ' + token } : {}
+            }
+          );
+          var body = await res.json();
+
+          // 后端统一返回 { code, message, data }，code !== 200 即业务失败
+          if (!body || body.code !== 200) {
+            throw new Error((body && body.message) || '支付失败，请重试');
+          }
+
+          // 支付成功：展示结果，稍后自动跳回商城
+          $('result-icon').className = 'icon ok';
+          $('result-icon').textContent = '✓';
+          $('result-title').textContent = '支付成功';
+          $('result-amount').textContent = '实付金额：¥' + money(amount);
+          $('result-paymentNo').textContent = '支付单号：' + paymentNo;
+          $('result-tip').textContent = '正在返回商城…';
+          show('result');
+          setTimeout(function () { goBack(true); }, 1200);
+        } catch (e) {
+          // 支付失败：停留在此页，给用户重试的机会
+          $('result-icon').className = 'icon bad';
+          $('result-icon').textContent = '!';
+          $('result-title').textContent = '支付失败';
+          $('result-amount').textContent = (e && e.message) || '支付失败，请重试';
+          $('result-paymentNo').textContent = '';
+          $('result-tip').textContent = '可以点下方按钮重试，或返回商城稍后再付';
+          $('btn-back').classList.remove('hidden');
+          // 重试：再点一次「返回商城」不合适，这里把它当"重试"用更直觉
+          $('btn-back').textContent = '重新付款';
+          $('btn-back').onclick = function () {
+            $('btn-back').classList.add('hidden');
+            show('pay');
+          };
+          show('result');
+        }
+      }
+
+      // ---- 取消支付：直接回商城（订单仍是待支付，可在订单列表里继续付） ----
+      $('btn-cancel').addEventListener('click', function () {
+        goBack(false);
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -25,7 +25,15 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusinessException(BusinessException e) {
-        log.warn("业务异常: code={}, message={}", e.getCode(), e.getMessage());
+        // 5xx = 系统级异常（如 SYSTEM_ERROR「系统繁忙」）。它意味着"代码或环境出了问题"，
+        // 必须带堆栈才能定位——只记一行 message 会让本次排查彻底失去线索。
+        // 4xx 类业务异常（参数错误、库存不足、资源不存在…）是正常业务分支，
+        // 每个都要记堆栈会刷爆日志，只记摘要即可。
+        if (e.getCode() >= 500) {
+            log.error("系统级业务异常: code={}, message={}", e.getCode(), e.getMessage(), e);
+        } else {
+            log.warn("业务异常: code={}, message={}", e.getCode(), e.getMessage());
+        }
         return Result.error(e.getCode(), e.getMessage());
     }
 

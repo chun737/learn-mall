@@ -4,7 +4,7 @@ spring:
   datasource:
     username: root
     password: ${DB_PASSWORD}
-    url: jdbc:mysql://localhost:3306/ecommerce_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false
+    url: jdbc:mysql://localhost:3306/ecommerce_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     driver-class-name: com.mysql.jdbc.Driver
   data:
     redis:
@@ -25,11 +25,17 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl  # SQL 日志走 slf4j（DEBUG 级才输出，默认 INFO 关闭）；原先 StdOutImpl 每条 SQL 同步刷控制台，压测吞吐损失大
   type-aliases-package: com.mall.vo
   global-config:
     db-config:
       id-type: auto # 全局id类型为自增长
+
+# ⭐ 排查用：打开后控制台会打印每条 SQL 及其参数，定位"卡在哪一步"最有效。
+#   排查完记得注释掉 —— DEBUG 级日志量很大，压测时会明显拖慢吞吐。
+logging:
+  level:
+    com.mall.mapper: debug
 
 # PageHelper 分页插件配置
 pagehelper:
@@ -56,3 +62,12 @@ oss:
   access-key-secret: ${OSS_ACCESS_KEY_SECRET}
   bucket-name: ${OSS_BUCKET_NAME}      # 如 mall-images
   url-prefix: ${OSS_URL_PREFIX:}       # 自定义域名（可选），留空则自动拼 https://{bucket}.{endpoint}
+
+# RocketMQ：秒杀订单异步链路（SeckillActivityServiceImpl 发消息 / SeckillOrderConsumer 消费）
+# 地址指向虚拟机上的 NameServer；Docker 启动时只要端口映射不变（9876:9876），此处无需改动
+rocketmq:
+  name-server: 192.168.10.8:9876
+  producer:
+    # 发送者组名：同一应用内唯一即可，多实例部署时同组必须一致
+    group: mall-producer
+

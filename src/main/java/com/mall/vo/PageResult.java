@@ -4,6 +4,7 @@ import com.github.pagehelper.PageInfo;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -54,7 +55,9 @@ public class PageResult<T> implements Serializable {
      */
     public static <T> PageResult<T> of(PageInfo<?> pageInfo, List<T> list) {
         PageResult<T> result = new PageResult<>();
-        result.setList(list);
+        // 防御性拷贝：list 实际是 PageHelper 的 Page（非 java.util 类），
+        // 直接持有会导致缓存序列化带上 Page 类型，反序列化时被类型白名单拒绝
+        result.setList(new ArrayList<>(list));
         result.setTotal(pageInfo.getTotal());
         result.setPageNum(pageInfo.getPageNum());
         result.setPageSize(pageInfo.getPageSize());

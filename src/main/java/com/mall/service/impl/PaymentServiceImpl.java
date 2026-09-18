@@ -22,6 +22,7 @@ import com.mall.mapper.StockLogMapper;
 import com.mall.service.IPaymentService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mall.service.PayChannelService;
+import com.mall.util.SeckillStockRestorer;
 import com.mall.util.SecurityUtils;
 import com.mall.vo.AdminPaymentListVO;
 import com.mall.vo.PageResult;
@@ -57,19 +58,23 @@ public class PaymentServiceImpl extends ServiceImpl<PaymentMapper, Payment> impl
     private final StockLogMapper stockLogMapper;
     private final ProductSkuMapper productSkuMapper;
     private final SnowflakeIdGenerator idGenerator;
+    /** 秒杀库存回补：秒杀单全额退款时把秒杀活动库存（DB + Redis）还回去 */
+    private final SeckillStockRestorer seckillStockRestorer;
 
     public PaymentServiceImpl(OrderMapper orderMapper,
                               PayChannelService payChannelService,
                               OrderItemMapper orderItemMapper,
                               StockLogMapper stockLogMapper,
                               ProductSkuMapper productSkuMapper,
-            SnowflakeIdGenerator idGenerator) {
+            SnowflakeIdGenerator idGenerator,
+            SeckillStockRestorer seckillStockRestorer) {
         this.orderMapper = orderMapper;
         this.payChannelService = payChannelService;
         this.orderItemMapper = orderItemMapper;
         this.stockLogMapper = stockLogMapper;
         this.productSkuMapper = productSkuMapper;
         this.idGenerator = idGenerator;
+        this.seckillStockRestorer = seckillStockRestorer;
     }
 
     private String generatePaymentNo() {
@@ -296,6 +301,9 @@ public class PaymentServiceImpl extends ServiceImpl<PaymentMapper, Payment> impl
                 stockLog.setCreatedAt(LocalDateTime.now());
                 stockLogMapper.insert(stockLog);
             }
+            // 秒杀订单全额退款时，秒杀活动库存（DB + Redis）也要还回去——只退普通库存会让
+            // 秒杀名额永久被这笔已退款订单占着。非秒杀单在组件第一道闸门就返回，普通订单零开销。
+            seckillStockRestorer.restoreForSeckillOrder(order, items);
         }    }
 
     @Override

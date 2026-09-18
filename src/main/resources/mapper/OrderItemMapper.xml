@@ -2,4 +2,18 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.mall.mapper.OrderItemMapper">
 
+    <!-- 批量插入订单明细：foreach 拼一条多值 INSERT，N 次往返摊薄成 1 次 -->
+    <insert id="insertBatch">
+        INSERT INTO order_item
+            (order_id, order_no, product_id, sku_id, product_name,
+             sku_specs, sku_image, price, quantity, total_amount,
+             created_at, updated_at)
+        VALUES
+        <foreach collection="list" item="it" separator=",">
+            (#{it.orderId}, #{it.orderNo}, #{it.productId}, #{it.skuId}, #{it.productName},
+             #{it.skuSpecs}, #{it.skuImage}, #{it.price}, #{it.quantity}, #{it.totalAmount},
+             #{it.createdAt}, #{it.updatedAt})
+        </foreach>
+    </insert>
+
 </mapper>

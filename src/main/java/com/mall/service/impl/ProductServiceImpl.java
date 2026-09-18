@@ -23,9 +23,6 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.data.redis.core.RedisTemplate;
-import com.mall.service.IProductSearchService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,45 +45,20 @@ import static com.mall.enums.ErrorCode.NOT_FOUND;
  */
 @Service
 public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> implements IProductService {
-
-    private static final Logger log = LoggerFactory.getLogger(ProductServiceImpl.class);
-
     private final ProductMapper productMapper;
     private final ProductSkuMapper productSkuMapper;
     private final BloomFilterRegistry bloomFilterRegistry;
     private final RedisTemplate<String, Object> redisTemplate;
-    /** ES 搜索服务：同步与 keyword 搜索 */
-    private final IProductSearchService productSearchService;
 
     // 缓存 key 前缀/占位符/TTL 等固定值已统一迁至 Constants（CACHE_KEY_PRODUCT / LOCK_KEY_PRODUCT 等）
 
     public ProductServiceImpl(ProductMapper productMapper, ProductSkuMapper productSkuMapper,
                               BloomFilterRegistry bloomFilterRegistry,
-                              RedisTemplate<String, Object> redisTemplate,
-                              IProductSearchService productSearchService) {
+                              RedisTemplate<String, Object> redisTemplate) {
         this.productMapper = productMapper;
         this.productSkuMapper = productSkuMapper;
         this.bloomFilterRegistry = bloomFilterRegistry;
         this.redisTemplate = redisTemplate;
-        this.productSearchService = productSearchService;
-    }
-
-    /** ES 同步失败不阻断主流程（ES 只是搜索副本），记日志即可 */
-    private void syncEsQuietly(Long productId) {
-        try {
-            productSearchService.syncProductById(productId);
-        } catch (Exception e) {
-            log.warn("ES 同步失败 productId={}: {}", productId, e.getMessage());
-        }
-    }
-
-    /** ES 删除失败不阻断主流程 */
-    private void deleteEsQuietly(Long productId) {
-        try {
-            productSearchService.deleteByProductId(productId);
-        } catch (Exception e) {
-            log.warn("ES 删除失败 productId={}: {}", productId, e.getMessage());
-        }
     }
 
     @Override
@@ -100,15 +72,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             Long categoryId,
             String keyword,
             String sortBy) {
-        // 0. 有关键词 → 走 ES 分词搜索（分类浏览/无关键词仍走 MySQL + 缓存）
-        //    ES 不可用时降级回 MySQL（try 内抛异常则继续往下执行原逻辑）
-        if (keyword != null && !keyword.isEmpty()) {
-            try {
-                return productSearchService.searchProducts(categoryId, keyword, sortBy, pageNum, pageSize);
-            } catch (Exception e) {
-                log.warn("ES 搜索降级走 MySQL，keyword={}: {}", keyword, e.getMessage());
-            }
-        }
         // 1. 开启分页：紧随其后的第一条 SQL 会被 PageHelper 自动改写（追加 LIMIT + 发 COUNT 查询）
         PageUtils.startPage(pageNum, pageSize);
 
@@ -262,8 +225,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         productMapper.insert(product);
         // 同步维护布隆过滤器：漏掉这步新商品会被过滤器误杀（前台查询直接 404）
         bloomFilterRegistry.add(Constants.BLOOM_FILTER_PRODUCT, product.getId());
-        // 同步 ES（此时 SKU 可能还没有，先灌一条；加 SKU 后 addSkus 会再同步价格）
-        syncEsQuietly(product.getId());
         ProductDetailVO productDetailVO = new ProductDetailVO();
         BeanUtils.copyProperties(product,productDetailVO);
         return productDetailVO;
@@ -310,9 +271,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
         // 4. 更新落库
         productMapper.updateById(product);
-
-        // 5. 同步 ES：名称/分类/状态变了，搜索副本要跟上（失败不阻断）
-        syncEsQuietly(id);
     }
 
     @Override
@@ -359,13 +317,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                         .eq(ProductSku::getProductId, id)
                         .eq(ProductSku::getDeleted, Constants.NOT_DELETED));
 
-        // 6. 同步 ES：上架 → 索引；下架 → 移除（保证搜不到下架商品）
-        if (status == Constants.PRODUCT_STATUS_ON_SHELF) {
-            syncEsQuietly(id);
-        } else {
-            deleteEsQuietly(id);
-        }
-
         return status == Constants.PRODUCT_STATUS_ON_SHELF ? "商品上架成功" : "商品下架成功";
     }
 
@@ -385,8 +336,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         productMapper.deleteProduct(id);
         // 3. 逻辑删除该商品下的所有 SKU
         productMapper.deleteProductSkus(id);
-        // 4. 从 ES 移除（保证搜索结果不再出现已删除商品）
-        deleteEsQuietly(id);
     }
 
     @Override
@@ -414,8 +363,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         productSku.setCreatedAt(LocalDateTime.now());
         productSku.setProductId(id);
         productSkuMapper.insert(productSku);
-        // 同步 ES：加 SKU 后价格区间/销量变化，重新灌这条商品
-        syncEsQuietly(id);
     }
 
 

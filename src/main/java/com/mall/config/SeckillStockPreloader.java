@@ -11,6 +11,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -45,8 +46,11 @@ public class SeckillStockPreloader implements ApplicationRunner {
         int skipped = 0;
         for (SeckillActivity activity : activities) {
             String key = Constants.seckillStockKey(activity.getId());
+            // TTL = 到活动 end_time + 缓冲 的剩余时长：活动自然结束后这两个 key 自动回收，
+            // 否则它们会永久滞留（原先无 TTL，Redis 内存只增不减）
+            Duration ttl = Constants.seckillKeyTtl(activity.getEndTime());
             // setIfAbsent = SETNX：key 不存在才写入，已存在不覆盖（保留已消耗库存）
-            Boolean absent = redisTemplate.opsForValue().setIfAbsent(key, activity.getAvailableStock());
+            Boolean absent = redisTemplate.opsForValue().setIfAbsent(key, activity.getAvailableStock(), ttl);
             if (Boolean.TRUE.equals(absent)) {
                 preloaded++;
             } else {

@@ -23,6 +23,21 @@ public interface IOrderService extends IService<Order> {
     OrderCreateVO addOrder(OrderCreateDTO orderCreateDTO);
 
     /**
+     * 显式指定下单用户的建单入口：供 MQ 消费线程等没有
+     * SecurityContext（ThreadLocal 无用户身份）的场景调用。
+     */
+    OrderCreateVO addOrder(OrderCreateDTO orderCreateDTO, Long userId);
+
+    /**
+     * 秒杀批量建单：整批共用一个数据库事务。
+     * 同 SKU 汇总一次扣库存（热点行只锁一次），明细/流水批量插入。
+     *
+     * @return 建单失败的 orderNo 集合（库存不足/地址非法等），
+     *         调用方据此做 Redis 侧库存回补与失败标记；重复消息视为成功
+     */
+    java.util.Set<String> addSeckillOrderBatch(java.util.List<com.mall.dto.SeckillOrderMessage> msgs);
+
+    /**
      * 订单分页列表
      *
      * @param pageNum     页码，从 1 开始

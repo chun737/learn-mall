@@ -1,0 +1,21 @@
+/* 脚手架的演示布局（#app 定宽居中、body 垂直居中、左右两列 grid）已删除——
+   它们是给欢迎页设计的，会架空 .page 的布局。
+   页面布局现在完全由各页面的 .page 容器控制。 */
+@import './base.css';
+
+/* ===== Element Plus 主题色覆盖 =====
+   Element 默认主色是蓝色 #409EFF，这里改成项目的主题红 #e1251b。
+   做法是覆盖它的 CSS 变量，不需要动任何组件代码。
+
+   为什么连 light-3 / light-5 / dark-2 一起覆盖？
+   它们是 Element 为 hover 态、禁用态、按下态**派生**出的色阶。
+   只改 --el-color-primary 的话，会出现"按钮是红的、hover 一下变蓝"的割裂感。 */
+:root {
+  --el-color-primary: #e1251b;
+  --el-color-primary-light-3: #ea655d;
+  --el-color-primary-light-5: #f29b96;
+  --el-color-primary-light-7: #f8cbc8;
+  --el-color-primary-light-8: #fbe0de;
+  --el-color-primary-light-9: #fdf0ef;
+  --el-color-primary-dark-2: #c41d15;
+}

@@ -3,6 +3,7 @@ package com.mall.controller.admin;
 import com.mall.common.Result;
 import com.mall.dto.ProductDTO;
 import com.mall.dto.SkuDTO;
+import com.mall.service.IProductSearchService;
 import com.mall.service.IProductService;
 import com.mall.vo.AdminSkuVO;
 import com.mall.vo.PageResult;
@@ -21,9 +22,18 @@ import java.util.List;
 @Tag(name = "商品后台管理")
 public class ProductController {
     private final IProductService productService;
+    private final IProductSearchService productSearchService;
 
-    public ProductController(IProductService productService) {
+    public ProductController(IProductService productService, IProductSearchService productSearchService) {
         this.productService = productService;
+        this.productSearchService = productSearchService;
+    }
+
+    @PostMapping("/es/import")
+    @Operation(summary = "ES全量同步：把MySQL全部在售商品灌入product索引（幂等，重复调用会覆盖）")
+    public Result<String> importAllToEs() {
+        int count = productSearchService.importAll();
+        return Result.success("ES 全量同步完成，共 " + count + " 条");
     }
     @GetMapping()
     @Operation(summary = "商品列表")
