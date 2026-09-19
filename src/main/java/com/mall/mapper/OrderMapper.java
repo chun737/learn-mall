@@ -90,4 +90,17 @@ public interface OrderMapper extends BaseMapper<Order> {
      * 只 SET deleted/updated_at 两列，不做整行覆盖，避免把并发变更的其他列写回旧快照。
      */
     int markDeleted(@Param("id") Long id);
+
+    /**
+     * 发货（CAS）：仅"已支付(1)"可翻转为"已发货(2)"，物流信息与状态原子写入。
+     * 返回影响行数：0 = 状态已被并发请求（退款/取消）翻转，拒绝覆盖（防丢失更新）。
+     */
+    int markShipped(@Param("orderNo") String orderNo,
+                    @Param("company") String company,
+                    @Param("trackingNo") String trackingNo);
+
+    /**
+     * 确认收货（CAS）：仅"已发货(2)"可翻转为"已完成(3)"。
+     */
+    int markCompleted(@Param("orderNo") String orderNo, @Param("userId") Long userId);
 }

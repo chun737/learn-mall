@@ -212,6 +212,31 @@
           AND deleted = 0
     </update>
 
+    <!-- 发货（CAS）：仅已支付(1)可翻转为已发货(2)；只 SET 物流与状态列，禁止整行覆盖 -->
+    <update id="markShipped">
+        UPDATE `order`
+        SET order_status     = 2,
+            shipping_company = #{company},
+            tracking_no      = #{trackingNo},
+            shipped_at       = NOW(),
+            updated_at       = NOW()
+        WHERE order_no = #{orderNo}
+          AND order_status = 1
+          AND deleted = 0
+    </update>
+
+    <!-- 确认收货（CAS）：仅已发货(2)可翻转为已完成(3) -->
+    <update id="markCompleted">
+        UPDATE `order`
+        SET order_status = 3,
+            completed_at = NOW(),
+            updated_at   = NOW()
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+          AND order_status = 2
+          AND deleted = 0
+    </update>
+
     <!-- 逻辑删除订单（CAS）：仅未删除行生效；只更新 deleted/updated_at，不做整行覆盖 -->
     <update id="markDeleted">
         UPDATE `order`

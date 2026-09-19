@@ -71,18 +71,25 @@ public class ProductSkuServiceImpl extends ServiceImpl<ProductSkuMapper, Product
             }
         }
 
-        // 3. 白名单更新允许修改的字段（只更新传了值的字段，避免覆盖成 null）
-        if (skuDTO.getSkuCode() != null)    productSku.setSkuCode(skuDTO.getSkuCode());
-        if (skuDTO.getSpecs() != null)      productSku.setSpecs(skuDTO.getSpecs());
-        if (skuDTO.getPrice() != null)      productSku.setPrice(skuDTO.getPrice());
-        if (skuDTO.getCostPrice() != null)  productSku.setCostPrice(skuDTO.getCostPrice());
-        if (skuDTO.getStock() != null)      productSku.setStock(skuDTO.getStock());
-        if (skuDTO.getImage() != null)      productSku.setImage(skuDTO.getImage());
-        if (skuDTO.getStatus() != null)     productSku.setStatus(skuDTO.getStatus());
-        productSku.setUpdatedAt(LocalDateTime.now());
+        // 3. 白名单更新：把允许修改的字段拷到"空实体"上再 updateById。
+        //    ⭐ 不能复用上面查出来的 productSku 整行去 updateById——那是 selectById 时刻的完整行快照，
+        //    MP 的 NOT_NULL 更新策略会把所有非 null 字段（含 stock/sales）一并 SET 回去，
+        //    并发下单刚扣掉的库存会被旧快照覆盖（丢更新 → 超卖，审计 S2）。
+        //    库存变更只能走 adjustStock（写 stock_log 流水），这里有意忽略 SkuDTO.stock。
+        ProductSku updater = new ProductSku();
+        updater.setId(id);
+        if (skuDTO.getSkuCode() != null)    updater.setSkuCode(skuDTO.getSkuCode());
+        if (skuDTO.getSpecs() != null)      updater.setSpecs(skuDTO.getSpecs());
+        if (skuDTO.getPrice() != null)      updater.setPrice(skuDTO.getPrice());
+        if (skuDTO.getCostPrice() != null)  updater.setCostPrice(skuDTO.getCostPrice());
+        if (skuDTO.getImage() != null)      updater.setImage(skuDTO.getImage());
+        if (skuDTO.getStatus() != null)     updater.setStatus(skuDTO.getStatus());
+        updater.setUpdatedAt(LocalDateTime.now());
 
-        // 4. 更新落库（updateById 只更新非 null 字段，createdAt 等原值保留）
-        productSkuMapper.updateById(productSku);
+        // 4. 更新落库：WHERE 自动带 deleted=0（@TableLogic），并发删除后影响行数为 0
+        if (productSkuMapper.updateById(updater) == 0) {
+            throw new BusinessException(NOT_FOUND);
+        }
     }
 
     @Override

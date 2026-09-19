@@ -588,13 +588,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException(ORDER_STATUS_ERROR);
         }
 
-        // 3. 更新订单为"已发货"：写物流信息 + 发货时间
-        order.setOrderStatus(Constants.ORDER_STATUS_SHIPPED);
-        order.setShippingCompany(shippingCompany);
-        order.setTrackingNo(trackingNo);
-        order.setShippedAt(LocalDateTime.now());
-        order.setUpdatedAt(LocalDateTime.now());
-        orderMapper.updateById(order);
+        // 3. CAS 翻转：WHERE 带 order_status=1，且只 SET 物流三列 + 状态。
+        //    旧写法 updateById(order) 是"先读快照、整行覆盖、WHERE 仅主键"：
+        //    并发退款（markRefunded 已把单翻转成已退款并回补库存）会被本请求覆盖回
+        //    "已发货+已支付"——库存已回补却继续履约，资损 + 状态机破坏（审计 严重-2）
+        int rows = orderMapper.markShipped(orderNo, shippingCompany, trackingNo);
+        if (rows == 0) {
+            // 竞态：状态已被并发的退款/取消请求翻转，本请求按"状态不对"失败
+            throw new BusinessException(ORDER_STATUS_ERROR);
+        }
     }
 
     @Override
@@ -694,11 +696,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException(ORDER_STATUS_ERROR);
         }
 
-        // 3. 更新状态为"已完成" + 记录完成时间
-        order.setOrderStatus(Constants.ORDER_STATUS_COMPLETED);
-        order.setCompletedAt(LocalDateTime.now());
-        order.setUpdatedAt(LocalDateTime.now());
-        orderMapper.updateById(order);
+        // 3. CAS 翻转（理由同 sendOrder，审计 严重-2）：并发退款不能被整行覆盖回"已完成"
+        int rows = orderMapper.markCompleted(orderNo, userId);
+        if (rows == 0) {
+            throw new BusinessException(ORDER_STATUS_ERROR);
+        }
     }
 
     @Override
