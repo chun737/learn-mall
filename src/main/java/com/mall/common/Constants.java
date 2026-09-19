@@ -125,6 +125,10 @@ public final class Constants {
     public static final String SECKILL_LIST_KEY = CACHE_PREFIX + "seckill:list";
     /** 秒杀活动详情缓存 key 前缀，完整 key = SECKILL_DETAIL_KEY_PREFIX + activityId */
     public static final String SECKILL_DETAIL_KEY_PREFIX = CACHE_PREFIX + "seckill:detail:";
+    /** 秒杀补偿幂等闸门 key 前缀：完整 key = SECKILL_COMPENSATED_PREFIX + orderNo，SETNX 抢到才有资格回补 */
+    public static final String SECKILL_COMPENSATED_PREFIX = CACHE_PREFIX + "seckill:compensated:";
+    /** 秒杀延迟待补偿 ZSET：member = activityId|userId|quantity|orderNo，score = 可补偿时间戳(ms) */
+    public static final String SECKILL_COMPENSATE_PENDING_KEY = CACHE_PREFIX + "seckill:compensate:pending";
 
     // ---- Spring Cache 缓存名（编译期常量，可直接用于 @Cacheable/@CacheEvict）----
     public static final String CACHE_NAME_CATEGORY = "category";

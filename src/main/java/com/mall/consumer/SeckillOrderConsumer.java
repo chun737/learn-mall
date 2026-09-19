@@ -3,6 +3,7 @@ package com.mall.consumer;
 import com.mall.common.Constants;
 import com.mall.dto.SeckillOrderMessage;
 import com.mall.service.IOrderService;
+import com.mall.util.SeckillCompensator;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.slf4j.Logger;
@@ -59,10 +60,13 @@ public class SeckillOrderConsumer implements RocketMQListener<SeckillOrderMessag
 
     private final IOrderService orderService;
     private final RedisTemplate redisTemplate;
+    private final SeckillCompensator seckillCompensator;
 
-    public SeckillOrderConsumer(IOrderService orderService, RedisTemplate redisTemplate) {
+    public SeckillOrderConsumer(IOrderService orderService, RedisTemplate redisTemplate,
+                                SeckillCompensator seckillCompensator) {
         this.orderService = orderService;
         this.redisTemplate = redisTemplate;
+        this.seckillCompensator = seckillCompensator;
     }
 
     @Override
@@ -81,31 +85,14 @@ public class SeckillOrderConsumer implements RocketMQListener<SeckillOrderMessag
         Set<String> failedOrderNos = orderService.addSeckillOrderBatch(msgs);
 
         if (failedOrderNos.contains(msg.getOrderNo())) {
-            compensate(msg);
+            // 幂等补偿（SETNX 闸门 + DB 复核在 SeckillCompensator 内）：
+            // 消息重投 / 死信兜底 / 延迟任务三方撞车也只回补一次
+            seckillCompensator.compensateNow(msg);
         } else {
             // 写入 redis 结果（重复消息重复写同值，幂等无害）
             redisTemplate.opsForHash().put(
                     SECKILL_RESULT_PREFIX + msg.getActivityId(),
                     msg.getUserId().toString(), msg.getOrderNo());
         }
-    }
-
-    /**
-     * 单条建单失败的兜底：消费线程没有 SecurityContext，
-     * userId 必须取自消息体，不能用 SecurityUtils.getUserId()
-     */
-    private void compensate(SeckillOrderMessage msg) {
-        Long activityId = msg.getActivityId();
-        Integer quantity = msg.getQuantity();
-        Long userId = msg.getUserId();
-        // 1. 回补库存
-        String stockKey = seckillStockKey(activityId);
-        redisTemplate.opsForValue().increment(stockKey, quantity);
-        // INCRBY 对不存在的 key 会创建一个永久 key：顺手补 TTL，防止秒杀库存 key 永久滞留
-        Constants.refreshSeckillKeyTtl(redisTemplate, stockKey);
-        // 2. 回退已购数量（否则用户被记住"抢过一次"，下次限购拦截）
-        redisTemplate.opsForHash().increment(seckillBoughtKey(activityId), userId, -quantity);
-        // 3. 标记失败结果（前端 getResult 能查到"下单失败"）
-        redisTemplate.opsForHash().put(SECKILL_RESULT_PREFIX + activityId, userId, "FAILED");
     }
 }

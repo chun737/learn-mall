@@ -17,6 +17,7 @@ import com.mall.service.IOrderService;
 import com.mall.service.IProductSkuService;
 import com.mall.service.ISeckillActivityService;
 import com.mall.util.BloomFilterRegistry;
+import com.mall.util.SeckillCompensator;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mall.util.SecurityUtils;
 import com.mall.vo.*;
@@ -81,13 +82,15 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
     }
 
     private final RocketMQTemplate rocketMQTemplate;
+    private final SeckillCompensator seckillCompensator;
 
     public SeckillActivityServiceImpl(SeckillActivityMapper seckillActivityMapper,
                                       RedisTemplate<String, Object> redisTemplate,
                                       BloomFilterRegistry bloomFilterRegistry,
                                       IOrderService orderService,
                                       ProductSkuMapper productSkuMapper,
-                                      SnowflakeIdGenerator snowflakeIdGenerator, RocketMQTemplate rocketMQTemplate) {
+                                      SnowflakeIdGenerator snowflakeIdGenerator, RocketMQTemplate rocketMQTemplate,
+                                      SeckillCompensator seckillCompensator) {
         this.seckillActivityMapper = seckillActivityMapper;
         this.redisTemplate = redisTemplate;
         this.bloomFilterRegistry = bloomFilterRegistry;
@@ -95,6 +98,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         this.productSkuMapper = productSkuMapper;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.rocketMQTemplate = rocketMQTemplate;
+        this.seckillCompensator = seckillCompensator;
     }
 
     @Override
@@ -242,38 +246,22 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
 
                 @Override
                 public void onException(Throwable e) {
-                    compensateSendFailure(id, userId, quantity, e);
+                    // ⭐ 回调里的"发送失败"可能是客户端超时误判——消息或许已落盘并被消费建单。
+                    //    立即回补会与消费事务竞态（既建单又回补 → 库存虚增超卖），
+                    //    先入延迟队列，由定时任务以 DB 订单为准绳复核后再补偿（SeckillCompensator）
+                    seckillCompensator.scheduleCompensation(msg);
                 }
             });
         } catch (Exception e) {
-            compensateSendFailure(id, userId, quantity, e);
+            // 同步抛出 = 消息根本没有发出去（producer 未启动/参数非法），不存在"已建单"的可能，
+            // 立即补偿是安全的；仍抛给前端让本次抢购明确失败
+            seckillCompensator.compensateNow(msg);
             throw new BusinessException(SYSTEM_ERROR);
         }
         SeckillResultVO vo = new SeckillResultVO();
         vo.setSeckillResult(Constants.SECKILL_RESULT_QUEUING);  // 0 = 排队中
         vo.setSeckillResultText("排队中");
         return vo;
-    }
-
-    /**
-     * MQ 发送失败的兜底：回补库存 + 回退已购数 + 标记 FAILED。
-     * 回调线程里抛出的异常无人接收，所以全程不抛、只记日志：
-     * - 不回补库存：Lua 已扣的库存永远不释放，活动被"幽灵"扣空；
-     * - 不回退已购数：用户被限购拦住，无法再抢；
-     * - 不标 FAILED：用户轮询 getResult 永远停在"排队中"。
-     */
-    private void compensateSendFailure(Long activityId, Long userId, Integer quantity, Throwable cause) {
-        log.error("秒杀 MQ 发送失败，活动={}, userId={}", activityId, userId, cause);
-        try {
-            String stockKey = Constants.seckillStockKey(activityId);
-            redisTemplate.opsForValue().increment(stockKey, quantity);
-            // INCRBY 对不存在的 key 会创建一个永久 key：这里顺手补 TTL，防止秒杀库存 key 永久滞留
-            Constants.refreshSeckillKeyTtl(redisTemplate, stockKey);
-            redisTemplate.opsForHash().increment(Constants.seckillBoughtKey(activityId), userId, -quantity);
-            redisTemplate.opsForHash().put(Constants.SECKILL_RESULT_PREFIX + activityId, userId.toString(), "FAILED");
-        } catch (Exception e) {
-            log.error("秒杀 MQ 发送失败补偿也失败，活动={}, userId={}", activityId, userId, e);
-        }
     }
 
     /**
