@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 优惠券后台管理（api_doc 4.7）：需 ADMIN 角色（SecurityConfig 对 /admin/** 统一拦截）
+ * 优惠券后台管理（frontend-api-guide 4.5）：需 ADMIN 角色（SecurityConfig 对 /admin/** 统一拦截）
  *
  * @author 乐乐
  */

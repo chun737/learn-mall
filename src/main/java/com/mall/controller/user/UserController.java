@@ -42,7 +42,7 @@ public class UserController {
     }
 
     /**
-     * 我的优惠券（api_doc 3.6.3）：分页 + 状态筛选（0=未使用 1=已使用 2=已过期，不传=全部）
+     * 我的优惠券（frontend-api-guide 3.2）：分页 + 状态筛选（0=未使用 1=已使用 2=已过期，不传=全部）
      */
     @GetMapping("/coupons")
     @Operation(summary = "我的优惠券")

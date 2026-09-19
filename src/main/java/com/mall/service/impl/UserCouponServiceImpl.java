@@ -40,7 +40,7 @@ public class UserCouponServiceImpl extends ServiceImpl<UserCouponMapper, UserCou
         PageInfo<UserCouponVO> pageInfo = new PageInfo<>(voList);
 
         // 2. 惰性过期展示：DB 里仍为 0=未使用但已过 expire_time 的，展示层直接判为已过期
-        //（正式方案可用定时任务批量回写 coupon_status=2，见 api_doc 3.6.3 注意事项）
+        //（正式方案可用定时任务批量回写 coupon_status=2，见 frontend-api-guide 3.2 注意事项）
         LocalDateTime now = LocalDateTime.now();
         for (UserCouponVO vo : voList) {
             vo.setCouponStatusText(statusText(vo.getCouponStatus(), vo.getExpireTime(), now));

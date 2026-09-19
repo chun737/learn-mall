@@ -39,7 +39,7 @@ public enum ErrorCode {
     PAYMENT_FAILED(3003, "支付失败"),
     PAYMENT_NOT_FOUND(3004, "支付单不存在"),
 
-    // 营销（api_doc 5.1：420xx 优惠券、421xx 秒杀）
+    // 营销（frontend-api-guide 六：420xx 优惠券、421xx 秒杀）
     COUPON_RECEIVE_NOT_IN_TIME(42001, "优惠券不在可领取时间内"),
     COUPON_SOLD_OUT(42002, "优惠券已领完"),
     COUPON_LIMIT_REACHED(42003, "已达限领数量"),

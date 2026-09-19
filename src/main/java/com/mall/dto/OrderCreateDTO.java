@@ -22,7 +22,7 @@ public class OrderCreateDTO {
     /** 订单备注 */
     private String remark;
 
-    /** 用户优惠券 ID（user_coupon.id），传入则在下单事务内核销（api_doc 3.4.2） */
+    /** 用户优惠券 ID（user_coupon.id），传入则在下单事务内核销（frontend-api-guide 3.7） */
     private Long couponId;
 
     /** 自定义订单号（幂等用），缺省由后端生成 */

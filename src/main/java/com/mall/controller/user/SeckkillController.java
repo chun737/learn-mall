@@ -22,7 +22,7 @@ public class SeckkillController {
     @GetMapping()
     @Operation(summary = "秒杀活动列表")
     public Result<PageResult<SeckillActivityVO>> getSkLists(
-            // status 不传=全部（api_doc 3.6.5），分页参数带默认值
+            // status 不传=全部（frontend-api-guide 3.10），分页参数带默认值
             @RequestParam(value = "status", required = false) Integer status,
             @RequestParam(value = "pageNum", defaultValue = "1") Integer pageNum,
             @RequestParam(value = "pageSize", defaultValue = "10") Integer pageSize

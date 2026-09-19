@@ -111,7 +111,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     }
 
     /**
-     * 领取优惠券（api_doc 3.6.2，完整流程见 5.4.6 领券防超发）。
+     * 领取优惠券（frontend-api-guide 3.8）。
      * 事务内五步：行锁读 → 领取窗口校验 → 限领校验 → 条件扣减 + 生成持券记录。
      *
      * 并发一致性设计（多实例部署同样成立，锁在 DB 数据行上，与应用服务器数量无关）：
@@ -174,7 +174,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
         return vo;
     }
 
-    // ---------- 后台（api_doc 4.7） ----------
+    // ---------- 后台（frontend-api-guide 4.5） ----------
 
     /** 优惠券列表（4.7.1）：分页 + 状态/名称筛选，领取量/核销量由 SQL 联查统计 */
     @Override
@@ -194,7 +194,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     /** 创建优惠券（4.7.2）：白名单校验后落库，remain_count = totalCount，并逐出可领券缓存 */
     @Override
     public CouponAdminVO create(CouponCreateDTO dto) {
-        // 1. 参数校验（api_doc 4.7.2 注意事项：时间区间、门槛与抵扣关系、总量与有效期为正）
+        // 1. 参数校验（frontend-api-guide 4.5 注意事项：时间区间、门槛与抵扣关系、总量与有效期为正）
         if (dto == null || dto.getCouponName() == null || dto.getCouponName().isBlank()
                 || dto.getDiscountAmount() == null
                 || dto.getTotalCount() == null || dto.getTotalCount() <= 0
@@ -267,7 +267,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
         return PageResult.of(pageInfo, voList);
     }
 
-    /** 券类型文本映射（api_doc 5.2 coupon.type） */
+    /** 券类型文本映射（frontend-api-guide 六 coupon.type） */
     private String couponTypeText(Integer type) {
         if (type == null) {
             return "";

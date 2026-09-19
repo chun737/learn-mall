@@ -24,11 +24,11 @@ public interface ICouponService extends IService<Coupon> {
     List<CouponVO> receiveCoupons();
 
     /**
-     * 领取优惠券（api_doc 3.6.2）：事务内完成限领校验、余量条件扣减（防超发）、生成持券记录。
+     * 领取优惠券（frontend-api-guide 3.8）：事务内完成限领校验、余量条件扣减（防超发）、生成持券记录。
      */
     CouponReceiveVO receiveCoupon(Long couponId);
 
-    // ---------- 后台（api_doc 4.7） ----------
+    // ---------- 后台（frontend-api-guide 4.5） ----------
 
     /** 优惠券列表（4.7.1）：分页 + 状态/名称筛选，含领取量与核销量统计 */
     PageResult<CouponAdminVO> listAdmin(Integer pageNum, Integer pageSize, Integer status, String keyword);

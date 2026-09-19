@@ -43,7 +43,7 @@ import static com.mall.enums.ErrorCode.*;
  * <p>
  * 秒杀活动表 服务实现类
  * </p>
- * 活动列表设计（api_doc 3.6.5）：
+ * 活动列表设计（frontend-api-guide 3.10）：
  * - 读多写少、数据量小（几十条）→ 整表缓存 60 秒 + Java 内存过滤分页，而非按页缓存
  *   （按页缓存在新增/删除活动时页内容整体漂移，会翻页重复/漏数据，是分页缓存反模式）；
  * - 活动状态由时间窗口（start/end 与 now 比较）实时计算，不用 DB 的 status 字段

@@ -38,7 +38,7 @@ public class CouponController {
     }
 
     /**
-     * 领取优惠券（api_doc 3.6.2）：POST /coupon/{id}/receive，需登录，
+     * 领取优惠券（frontend-api-guide 3.8）：POST /coupon/{id}/receive，需登录，
      * 用户 ID 由 JWT 过滤器注入 SecurityContext，经 SecurityUtils 获取（不信任前端传参）
      */
     @PostMapping("/{id}/receive")
@@ -48,7 +48,7 @@ public class CouponController {
     }
 
     /**
-     * 结算可用优惠券（api_doc 3.6.4）：按结算商品总金额过滤本人可用券，首条标记最优。
+     * 结算可用优惠券（frontend-api-guide 3.8）：按结算商品总金额过滤本人可用券，首条标记最优。
      * 文档路径为 GET /coupons/available，此处跟随控制器既有 /coupon 前缀
      */
     @GetMapping("/available")
