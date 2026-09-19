@@ -35,7 +35,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static com.mall.enums.ErrorCode.ORDER_NOT_FOUND;
 import static com.mall.enums.ErrorCode.ORDER_STATUS_ERROR;
@@ -278,28 +282,46 @@ public class PaymentServiceImpl extends ServiceImpl<PaymentMapper, Payment> impl
                 throw new BusinessException(ORDER_STATUS_ERROR);
             }
 
+            // H5 退款回补：明细按 SKU 汇总 → 每个热点行只锁一次 → 批量读回最终库存 →
+            // 一次 insertBatch 流水（旧版逐条 restore+回读+insert，一单 N 条明细 = 3N 条 SQL）
             List<OrderItem> items = orderItemMapper.selectList(new QueryWrapper<OrderItem>()
                     .eq("order_id", order.getId()));
+            Map<Long, Integer> qtyBySku = new LinkedHashMap<>();
             for (OrderItem item : items) {
-                int restored = productSkuMapper.restoreStock(item.getSkuId(), item.getQuantity());
-                if (restored == 0) {
-                    continue;
+                qtyBySku.merge(item.getSkuId(), item.getQuantity(), Integer::sum);
+            }
+            Map<Long, Integer> restoredQty = new LinkedHashMap<>();
+            for (Map.Entry<Long, Integer> entry : qtyBySku.entrySet()) {
+                // restoreStock 自带 deleted=0 与防负库存条件；0 行（SKU 被删等）跳过且不写流水，与旧版口径一致
+                if (productSkuMapper.restoreStock(entry.getKey(), entry.getValue()) > 0) {
+                    restoredQty.put(entry.getKey(), entry.getValue());
                 }
-                ProductSku fresh = productSkuMapper.selectById(item.getSkuId());
-                int afterStock = fresh.getStock();
-                int beforeStock = afterStock - item.getQuantity();
-
-                StockLog stockLog = new StockLog();
-                stockLog.setSkuId(item.getSkuId());
-                stockLog.setOrderId(order.getId());
-                stockLog.setOrderNo(order.getOrderNo());
-                stockLog.setChangeType(Constants.STOCK_CHANGE_REFUND);
-                stockLog.setChangeQty(item.getQuantity());
-                stockLog.setBeforeStock(beforeStock);
-                stockLog.setAfterStock(afterStock);
-                stockLog.setRemark("退款回补");
-                stockLog.setCreatedAt(LocalDateTime.now());
-                stockLogMapper.insert(stockLog);
+            }
+            if (!restoredQty.isEmpty()) {
+                // before/after 为推算值（读回前若有并发扣减/回补，绝对值有偏差——与取消路径同口径）
+                Map<Long, ProductSku> freshMap = productSkuMapper.selectBatchIds(restoredQty.keySet())
+                        .stream().collect(Collectors.toMap(ProductSku::getId, s -> s));
+                List<StockLog> stockLogs = new ArrayList<>(restoredQty.size());
+                for (Map.Entry<Long, Integer> entry : restoredQty.entrySet()) {
+                    ProductSku fresh = freshMap.get(entry.getKey());
+                    if (fresh == null) {
+                        continue;   // 理论不可达：刚回补成功就查不到了
+                    }
+                    StockLog stockLog = new StockLog();
+                    stockLog.setSkuId(entry.getKey());
+                    stockLog.setOrderId(order.getId());
+                    stockLog.setOrderNo(order.getOrderNo());
+                    stockLog.setChangeType(Constants.STOCK_CHANGE_REFUND);
+                    stockLog.setChangeQty(entry.getValue());
+                    stockLog.setBeforeStock(fresh.getStock() - entry.getValue());
+                    stockLog.setAfterStock(fresh.getStock());
+                    stockLog.setRemark("退款回补");
+                    stockLog.setCreatedAt(LocalDateTime.now());
+                    stockLogs.add(stockLog);
+                }
+                if (!stockLogs.isEmpty()) {
+                    stockLogMapper.insertBatch(stockLogs);
+                }
             }
             // 秒杀订单全额退款时，秒杀活动库存（DB + Redis）也要还回去——只退普通库存会让
             // 秒杀名额永久被这笔已退款订单占着。非秒杀单在组件第一道闸门就返回，普通订单零开销。

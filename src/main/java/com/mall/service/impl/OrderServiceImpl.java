@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import static com.mall.enums.ErrorCode.*;
@@ -182,12 +183,51 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException(PARAM_ERROR);
         }
 
-        // 3. 先插入订单主表，拿到 order.id 供明细引用
+        // 3. 批量预读 + 校验（H1：3N 次查询 → 2 次；H2：补上架校验）。
+        //    同 SKU 的多行购买数量先合并：同一 SKU 只扣一次锁一次、只写一条流水。
+        //    TreeMap 按 skuId 升序——并发下单对同一组 SKU 的加锁顺序全局一致，
+        //    A 扣 [1,2]、B 扣 [2,1] 互等对方行锁的 AB-BA 死锁从此没有立足点
+        TreeMap<Long, Integer> qtyBySku = new TreeMap<>();
+        for (OrderSkuDTO item : skuList) {
+            if (item.getSkuId() == null || item.getQuantity() == null || item.getQuantity() < 1) {
+                throw new BusinessException(PARAM_ERROR);
+            }
+            qtyBySku.merge(item.getSkuId(), item.getQuantity(), Integer::sum);
+        }
+        // selectBatchIds 自动追加 deleted=0（@TableLogic）：已删除/不存在的 SKU 在这里直接查不到
+        Map<Long, ProductSku> skuMap = productSkuMapper.selectBatchIds(qtyBySku.keySet())
+                .stream().collect(Collectors.toMap(ProductSku::getId, s -> s));
+        if (skuMap.size() != qtyBySku.size()) {
+            throw new BusinessException(STOCK_NOT_ENOUGH);
+        }
+        // H2 上架校验：商品未上架（含被删后查不到）或 SKU 未上架都拒绝，错误口径与购物车一致（2001）
+        Map<Long, Product> productMap = productMapper.selectBatchIds(
+                        skuMap.values().stream().map(ProductSku::getProductId).collect(Collectors.toSet()))
+                .stream().collect(Collectors.toMap(Product::getId, p -> p));
+        for (ProductSku sku : skuMap.values()) {
+            Product product = productMap.get(sku.getProductId());
+            if (product == null || product.getStatus() == null
+                    || product.getStatus() != Constants.PRODUCT_STATUS_ON_SHELF
+                    || sku.getStatus() == null
+                    || sku.getStatus() != Constants.PRODUCT_STATUS_ON_SHELF) {
+                throw new BusinessException(PRODUCT_OFF_SHELF);
+            }
+        }
+
+        // 4. 金额预计算：价格已在预读快照里，主表一次插入即带全金额
+        //    （消掉旧版"先插 0 再 updateById 整行回填"那条 UPDATE）
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        for (Map.Entry<Long, Integer> entry : qtyBySku.entrySet()) {
+            totalAmount = totalAmount.add(skuMap.get(entry.getKey()).getPrice()
+                    .multiply(BigDecimal.valueOf(entry.getValue())));
+        }
+
+        // 5. 插入订单主表（幂等重放 / DuplicateKey 兜底同旧版）
         Order order = new Order();
         order.setOrderNo(orderNo)
                 .setUserId(userId)
-                .setTotalAmount(BigDecimal.ZERO)
-                .setPayAmount(BigDecimal.ZERO)
+                .setTotalAmount(totalAmount)
+                .setPayAmount(totalAmount)
                 .setFreightAmount(BigDecimal.ZERO)
                 .setOrderStatus(Constants.ORDER_STATUS_UNPAID)
                 .setPaymentStatus(0)
@@ -216,68 +256,50 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return buildCreateVO(exist);
         }
 
-        // 4. 遍历商品：原子扣库存 + 写明细 + 写流水 + 累加金额
-        BigDecimal totalAmount = BigDecimal.ZERO;
-
-        for (OrderSkuDTO item : skuList) {
-            ProductSku sku = productSkuMapper.selectById(item.getSkuId());
-            if (sku == null) {
+        // 6. CAS 扣库存（锁序已定）+ 批量写明细/流水。
+        //    任一 SKU 库存不足 → 抛异常整个事务回滚（主表插入一并撤销，原子性与旧版相同）
+        LocalDateTime now = LocalDateTime.now();
+        List<OrderItem> orderItems = new ArrayList<>(qtyBySku.size());
+        List<StockLog> stockLogs = new ArrayList<>(qtyBySku.size());
+        for (Map.Entry<Long, Integer> entry : qtyBySku.entrySet()) {
+            ProductSku sku = skuMap.get(entry.getKey());
+            int quantity = entry.getValue();
+            // 6.1 原子扣减库存（CAS）：stock >= qty 才允许，并发下不会超卖
+            if (productSkuMapper.deductStock(sku.getId(), quantity) == 0) {
                 throw new BusinessException(STOCK_NOT_ENOUGH);
             }
-            int quantity = item.getQuantity();
-
-            // 4.1 原子扣减库存（CAS）：stock >= qty 才允许，并发下不会超卖
-            int rows = productSkuMapper.deductStock(sku.getId(), quantity);
-            if (rows == 0) {
-                throw new BusinessException(STOCK_NOT_ENOUGH);
-            }
-            // 扣减成功后读一次最新值，流水对账用
-            sku = productSkuMapper.selectById(sku.getId());
-            int beforeStock = sku.getStock() + quantity;
-            int afterStock = sku.getStock();
-
-            // 4.2 查商品名（快照）
-            Product product = productMapper.selectById(sku.getProductId());
-            String productName = product != null ? product.getProductName() : "";
-
-            // 4.3 写订单明细（带 orderId，无需二次回填）
+            // 6.2 订单明细（商品名等快照直接取自预读结果，不再逐个 selectById）
             OrderItem orderItem = new OrderItem();
             orderItem.setOrderId(order.getId());
             orderItem.setOrderNo(orderNo);
             orderItem.setProductId(sku.getProductId());
             orderItem.setSkuId(sku.getId());
-            orderItem.setProductName(productName);
+            Product productSnapshot = productMap.get(sku.getProductId());
+            orderItem.setProductName(productSnapshot != null ? productSnapshot.getProductName() : "");
             orderItem.setSkuSpecs(sku.getSpecs());
             orderItem.setSkuImage(sku.getImage());
             orderItem.setPrice(sku.getPrice());
             orderItem.setQuantity(quantity);
             orderItem.setTotalAmount(sku.getPrice().multiply(BigDecimal.valueOf(quantity)));
-            orderItem.setCreatedAt(LocalDateTime.now());
-            orderItem.setUpdatedAt(LocalDateTime.now());
-            orderItemMapper.insert(orderItem);
-
-            // 4.4 写库存流水
+            orderItem.setCreatedAt(now);
+            orderItem.setUpdatedAt(now);
+            orderItems.add(orderItem);
+            // 6.3 库存流水：before/after 用预读快照推算（旧版扣完再回读一次，纯为流水对账）
             StockLog stockLog = new StockLog();
             stockLog.setSkuId(sku.getId());
             stockLog.setOrderId(order.getId());
             stockLog.setOrderNo(orderNo);
             stockLog.setChangeType(Constants.STOCK_CHANGE_ORDER);
             stockLog.setChangeQty(-quantity);
-            stockLog.setBeforeStock(beforeStock);
-            stockLog.setAfterStock(afterStock);
-            stockLog.setCreatedAt(LocalDateTime.now());
-            stockLogMapper.insert(stockLog);
-
-            // 4.5 累加金额
-            totalAmount = totalAmount.add(sku.getPrice().multiply(BigDecimal.valueOf(quantity)));
+            stockLog.setBeforeStock(sku.getStock());
+            stockLog.setAfterStock(sku.getStock() - quantity);
+            stockLog.setCreatedAt(now);
+            stockLogs.add(stockLog);
         }
+        orderItemMapper.insertBatch(orderItems);
+        stockLogMapper.insertBatch(stockLogs);
 
-        // 5. 回填订单总金额
-        order.setTotalAmount(totalAmount);
-        order.setPayAmount(totalAmount);
-        orderMapper.updateById(order);
-
-        // 6. 组装响应
+        // 7. 组装响应
         return buildCreateVO(order);
     }
 
@@ -681,29 +703,56 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return orderMapper.selectTimeoutUnpaid(deadline, limit);
     }
 
-    /** 取消/超时共用的库存回补 + 流水写入（销量回退兜底不为负） */
+    /**
+     * 取消/超时共用的库存回补 + 流水写入（H5：明细按 SKU 汇总 → 每个热点行只锁一次 →
+     * 批量读回最终库存 → 一次 insertBatch 流水。旧版逐条 restore+回读+insert，
+     * 一单 N 条明细 = 3N 条 SQL；取消/超时任务高峰期会拖到下一轮都跑不完）。
+     */
     private void restoreStockAndLog(Order order) {
         List<OrderItem> orderItemList = orderItemMapper.selectList(
                 new QueryWrapper<OrderItem>().eq("order_id", order.getId()));
+        if (orderItemList.isEmpty()) {
+            return;
+        }
+        // 同 SKU 多条明细合并数量；LinkedHashMap 保持明细出现顺序，回补顺序稳定
+        Map<Long, Integer> qtyBySku = new LinkedHashMap<>();
         for (OrderItem item : orderItemList) {
-            int restored = productSkuMapper.restoreStock(item.getSkuId(), item.getQuantity());
-            if (restored == 0) {
-                continue;
+            qtyBySku.merge(item.getSkuId(), item.getQuantity(), Integer::sum);
+        }
+        // CAS 回补：restoreStock 自带 deleted=0 与防负库存条件；
+        // 影响 0 行（SKU 被删等）跳过且不写流水，与旧版口径一致
+        Map<Long, Integer> restoredQty = new LinkedHashMap<>();
+        for (Map.Entry<Long, Integer> entry : qtyBySku.entrySet()) {
+            if (productSkuMapper.restoreStock(entry.getKey(), entry.getValue()) > 0) {
+                restoredQty.put(entry.getKey(), entry.getValue());
             }
-            ProductSku fresh = productSkuMapper.selectById(item.getSkuId());
-            int afterStock = fresh.getStock();
-            int beforeStock = afterStock - item.getQuantity();
-
-            StockLog stockLog = new StockLog();
-            stockLog.setSkuId(item.getSkuId());
-            stockLog.setOrderId(order.getId());
-            stockLog.setOrderNo(order.getOrderNo());
-            stockLog.setChangeType(Constants.STOCK_CHANGE_CANCEL);
-            stockLog.setChangeQty(item.getQuantity());
-            stockLog.setBeforeStock(beforeStock);
-            stockLog.setAfterStock(afterStock);
-            stockLog.setCreatedAt(LocalDateTime.now());
-            stockLogMapper.insert(stockLog);
+        }
+        if (!restoredQty.isEmpty()) {
+            // 批量读回最终库存（1 次 SELECT 替代 N 次），before/after 为推算值
+            //（读回前若有并发扣减/回补，绝对值会有偏差——与秒杀批量路径同口径）
+            Map<Long, ProductSku> freshMap = productSkuMapper.selectBatchIds(restoredQty.keySet())
+                    .stream().collect(Collectors.toMap(ProductSku::getId, s -> s));
+            LocalDateTime now = LocalDateTime.now();
+            List<StockLog> stockLogs = new ArrayList<>(restoredQty.size());
+            for (Map.Entry<Long, Integer> entry : restoredQty.entrySet()) {
+                ProductSku fresh = freshMap.get(entry.getKey());
+                if (fresh == null) {
+                    continue;   // 理论不可达：刚回补成功就查不到了
+                }
+                StockLog stockLog = new StockLog();
+                stockLog.setSkuId(entry.getKey());
+                stockLog.setOrderId(order.getId());
+                stockLog.setOrderNo(order.getOrderNo());
+                stockLog.setChangeType(Constants.STOCK_CHANGE_CANCEL);
+                stockLog.setChangeQty(entry.getValue());
+                stockLog.setBeforeStock(fresh.getStock() - entry.getValue());
+                stockLog.setAfterStock(fresh.getStock());
+                stockLog.setCreatedAt(now);
+                stockLogs.add(stockLog);
+            }
+            if (!stockLogs.isEmpty()) {
+                stockLogMapper.insertBatch(stockLogs);
+            }
         }
         // 秒杀订单还要把秒杀活动库存（DB + Redis）还回去：上面的循环只回补了 product_sku 的普通库存，
         // 不回补秒杀库存的话，一笔被取消的秒杀单会永久占掉一个秒杀名额（库存单向只减不增）。
