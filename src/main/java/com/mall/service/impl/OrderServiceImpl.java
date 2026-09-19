@@ -158,8 +158,24 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException(NOT_FOUND);
         }
 
-        // 2. 生成订单号
-        String orderNo = generateOrderNo();
+        // 2. 订单号：客户端传了 orderNo 就当幂等键用（重复提交返回原单，不再扣库存），
+        //    缺省仍由后端雪花生成。审计 高-5：DTO.orderNo 此前被完全忽略，
+        //    结算页双击/网络重试会生成两笔订单并重复扣库存
+        String orderNo = orderCreateDTO.getOrderNo();
+        if (orderNo != null && !orderNo.isBlank()) {
+            // 白名单校验：幂等键只允许字母数字/下划线/连字符，防怪字符与超长值撞索引
+            if (!orderNo.matches("[A-Za-z0-9_-]{8,32}")) {
+                throw new BusinessException(PARAM_ERROR);
+            }
+            Order exist = orderMapper.selectOne(new QueryWrapper<Order>()
+                    .eq("order_no", orderNo)
+                    .eq("user_id", userId));
+            if (exist != null) {
+                return buildCreateVO(exist);
+            }
+        } else {
+            orderNo = generateOrderNo();
+        }
         List<OrderSkuDTO> skuList = orderCreateDTO.getSkuList();
         // 防御性校验：skuList 为空会导致下方遍历 NPE（Controller 层 @NotEmpty 已拦截，此处兜底）
         if (skuList == null || skuList.isEmpty()) {
@@ -185,7 +201,20 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .setCreatedAt(LocalDateTime.now())
                 .setUpdatedAt(LocalDateTime.now())
                 .setDeleted(Constants.NOT_DELETED);
-        orderMapper.insert(order);
+        try {
+            orderMapper.insert(order);
+        } catch (DuplicateKeyException e) {
+            // 并发双击：两个请求都通过了上面的存在性检查，uk_order_no 唯一索引只放行一个。
+            // 重查返回原单（限定本 user_id：拿别人的 orderNo 撞索引只会得到"参数错误"，不会泄露他人订单）。
+            // 重复键只失败当前语句、事务继续，后续扣库存正常提交
+            Order exist = orderMapper.selectOne(new QueryWrapper<Order>()
+                    .eq("order_no", orderNo)
+                    .eq("user_id", userId));
+            if (exist == null) {
+                throw new BusinessException(PARAM_ERROR);
+            }
+            return buildCreateVO(exist);
+        }
 
         // 4. 遍历商品：原子扣库存 + 写明细 + 写流水 + 累加金额
         BigDecimal totalAmount = BigDecimal.ZERO;
@@ -249,13 +278,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         orderMapper.updateById(order);
 
         // 6. 组装响应
-        OrderCreateVO orderCreateVO = new OrderCreateVO();
-        orderCreateVO.setOrderNo(order.getOrderNo());
-        orderCreateVO.setOrderId(order.getId());
-        orderCreateVO.setOrderStatus(order.getOrderStatus());
-        orderCreateVO.setPayAmount(order.getPayAmount());
-        orderCreateVO.setCreatedAt(order.getCreatedAt());
-        return orderCreateVO;
+        return buildCreateVO(order);
+    }
+
+    /** 下单响应组装（幂等重放路径复用） */
+    private OrderCreateVO buildCreateVO(Order order) {
+        OrderCreateVO vo = new OrderCreateVO();
+        vo.setOrderNo(order.getOrderNo());
+        vo.setOrderId(order.getId());
+        vo.setOrderStatus(order.getOrderStatus());
+        vo.setPayAmount(order.getPayAmount());
+        vo.setCreatedAt(order.getCreatedAt());
+        return vo;
     }
 
     /**
@@ -628,18 +662,17 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /**
      * 超时自动取消（定时任务调用）：与手动取消共用 CAS + 回补逻辑。
      * cancelUnpaidById 与支付路径的 markPaidById 同以 order_status=0 为条件，竞态时恰有一方生效。
+     * 接收扫描实体而非回查 orderId：扫描源不过滤 deleted，回查（MP 内置方法）会被
+     * @TableLogic 追加 deleted=0，历史"已删除仍待支付"的脏单会因查不到而跳过回补，泄漏依旧。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void cancelTimeout(Long orderId) {
-        int rows = orderMapper.cancelUnpaidById(orderId);
+    public void cancelTimeout(Order order) {
+        int rows = orderMapper.cancelUnpaidById(order.getId());
         if (rows == 0) {
             return;   // 已被支付/取消（竞态方抢先），无事可做
         }
-        Order order = orderMapper.selectById(orderId);
-        if (order != null) {
-            restoreStockAndLog(order);
-        }
+        restoreStockAndLog(order);
     }
 
     /** 定时任务数据源：超时未支付订单（分批限量） */

@@ -44,7 +44,7 @@ public class OrderTimeoutCancelTask {
         List<Order> orders = orderService.getTimeoutUnpaid(deadline, BATCH_LIMIT);
         for (Order order : orders) {
             try {
-                orderService.cancelTimeout(order.getId());
+                orderService.cancelTimeout(order);
             } catch (Exception e) {
                 log.error("超时取消订单失败: orderNo={}", order.getOrderNo(), e);
             }

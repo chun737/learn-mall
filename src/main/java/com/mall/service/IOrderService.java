@@ -53,8 +53,12 @@ public interface IOrderService extends IService<Order> {
     void confirmOrder(String orderNo);
 
     void deleteOrder(String orderNo);
-    /** 超时自动取消（定时任务）：CAS 翻转未支付→已取消并回补库存；订单已非待支付时静默跳过 */
-    void cancelTimeout(Long orderId);
+    /**
+     * 超时自动取消（定时任务）：CAS 翻转未支付→已取消并回补库存；订单已非待支付时静默跳过。
+     * 接收扫描出的实体而非 orderId：扫描源（XML）已不过滤 deleted，回查会被 @TableLogic
+     * 排除已删除行导致回补被跳过；顺带省一次 selectById。
+     */
+    void cancelTimeout(Order order);
 
     /** 查询超时未支付订单（定时任务数据源） */
     List<Order> getTimeoutUnpaid(LocalDateTime deadline, int limit);

@@ -192,24 +192,26 @@
           AND order_status IN (1, 2)
           AND deleted = 0
     </update>
-    <!-- 定时任务数据源：超时未支付订单（分批限量；需索引 idx_status_created） -->
+    <!-- 定时任务数据源：超时未支付订单（分批限量；需索引 idx_status_created）。
+         ⭐ 刻意不过滤 deleted：逻辑删除的待支付单若被排除，其扣掉的库存永远无人回补（审计 严重-3）；
+         配合 cancelTimeout 直接使用扫描实体，不回查（回查会被 @TableLogic 过滤掉已删除行） -->
     <select id="selectTimeoutUnpaid" resultType="com.mall.entity.Order">
         SELECT *
         FROM `order`
         WHERE order_status = 0
-          AND deleted = 0
           AND created_at &lt; #{deadline}
         LIMIT #{limit}
     </select>
 
-    <!-- 超时取消（CAS）：仅待支付(0)可翻转，与支付路径互斥 -->
+    <!-- 超时取消（CAS）：仅待支付(0)可翻转，与支付路径互斥。
+         不过滤 deleted：任务要能取消"已删除仍待支付"的订单并回补库存（审计 严重-3）；
+         支付路径 markPaidById 仍带 deleted=0，已删除订单不可被支付，两侧条件不一致是刻意的 -->
     <update id="cancelUnpaidById">
         UPDATE `order`
         SET order_status = 4,
             updated_at   = NOW()
         WHERE id = #{id}
           AND order_status = 0
-          AND deleted = 0
     </update>
 
     <!-- 发货（CAS）：仅已支付(1)可翻转为已发货(2)；只 SET 物流与状态列，禁止整行覆盖 -->
