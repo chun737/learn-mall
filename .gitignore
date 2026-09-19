@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### AI tool artifacts ###
+.codebuddy/
+.zcode/
+docx/.workbuddy/
+docx/.fbs/
+docx/qc-output/
