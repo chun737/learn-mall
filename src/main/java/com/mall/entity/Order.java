@@ -70,6 +70,18 @@ public class Order implements Serializable {
     private BigDecimal freightAmount;
 
     /**
+     * 优惠券优惠金额（未用券为 0；列由 marketing_schema v1.1 ALTER 提供）
+     */
+    @TableField("discount_amount")
+    private BigDecimal discountAmount;
+
+    /**
+     * 核销的用户优惠券 ID（user_coupon.id，未用券为 NULL）
+     */
+    @TableField("coupon_id")
+    private Long couponId;
+
+    /**
      * 订单状态：0=待支付 1=已支付 2=已发货 3=已完成 4=已取消 5=已退款
      */
     @TableField("order_status")

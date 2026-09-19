@@ -43,11 +43,13 @@ public enum ErrorCode {
     COUPON_RECEIVE_NOT_IN_TIME(42001, "优惠券不在可领取时间内"),
     COUPON_SOLD_OUT(42002, "优惠券已领完"),
     COUPON_LIMIT_REACHED(42003, "已达限领数量"),
+    COUPON_NOT_USABLE(42004, "优惠券不可用"),
     SECKILL_NOT_STARTED(42101, "秒杀活动未开始"),
     SECKILL_ENDED(42102, "秒杀活动已结束"),
     SECKILL_SOLD_OUT(42103, "秒杀库存不足"),
     SECKILL_LIMIT_REACHED(42104, "已达限购数量"),
-    SECKILL_DUPLICATE(42105, "重复提交，请求处理中");
+    SECKILL_DUPLICATE(42105, "重复提交，请求处理中"),
+    SECKILL_COUPON_NOT_SUPPORTED(42106, "秒杀订单暂不支持优惠券");
 
     private final int code;
     private final String message;

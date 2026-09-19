@@ -20,6 +20,7 @@ import com.mall.mapper.ProductSkuMapper;
 import com.mall.mapper.SeckillActivityMapper;
 import com.mall.mapper.StockLogMapper;
 import com.mall.mapper.UserAddressMapper;
+import com.mall.mapper.UserCouponMapper;
 import com.mall.service.IOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mall.service.IUserService;
@@ -78,6 +79,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private final SeckillActivityMapper seckillActivityMapper;
     /** 秒杀库存回补（取消/超时把这笔单占用的秒杀库存还回去） */
     private final SeckillStockRestorer seckillStockRestorer;
+    /** 优惠券核销/校验（下单用券） */
+    private final UserCouponMapper userCouponMapper;
 
     private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
 
@@ -94,7 +97,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                             ProductMapper productMapper,
             SnowflakeIdGenerator idGenerator,
             SeckillActivityMapper seckillActivityMapper,
-            SeckillStockRestorer seckillStockRestorer) {
+            SeckillStockRestorer seckillStockRestorer,
+            UserCouponMapper userCouponMapper) {
         this.orderMapper = orderMapper;
         this.userService = userService;
         this.cartMapper =  cartMapper;
@@ -106,6 +110,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         this.idGenerator = idGenerator;
         this.seckillActivityMapper = seckillActivityMapper;
         this.seckillStockRestorer = seckillStockRestorer;
+        this.userCouponMapper = userCouponMapper;
     }
 
     @Override
@@ -222,12 +227,34 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     .multiply(BigDecimal.valueOf(entry.getValue())));
         }
 
+        // 4.5 优惠券校验 + 优惠计算（修复前 couponId 被完全忽略：无折扣、无核销，审计 高-4/H3）。
+        //     口径与 3.8 可用券列表一致：本人 + 未使用 + 未过期；满减券比对门槛；折扣券(type=3)暂不开放
+        BigDecimal discountAmount = BigDecimal.ZERO;
+        if (orderCreateDTO.getCouponId() != null) {
+            UserCouponVO redeemable = userCouponMapper.selectRedeemable(orderCreateDTO.getCouponId(), userId);
+            if (redeemable == null || redeemable.getType() == null || redeemable.getDiscountAmount() == null) {
+                throw new BusinessException(COUPON_NOT_USABLE);      // 不存在/非本人/已用/已过期
+            }
+            if (redeemable.getType() == 1
+                    && (redeemable.getThresholdAmount() == null
+                        || totalAmount.compareTo(redeemable.getThresholdAmount()) < 0)) {
+                throw new BusinessException(COUPON_NOT_USABLE);      // 满减门槛未达
+            }
+            if (redeemable.getType() != 1 && redeemable.getType() != 2) {
+                throw new BusinessException(COUPON_NOT_USABLE);      // type=3 折扣券暂不开放
+            }
+            // 封顶：优惠不超过商品总额，payAmount 永不为负
+            discountAmount = redeemable.getDiscountAmount().min(totalAmount);
+        }
+
         // 5. 插入订单主表（幂等重放 / DuplicateKey 兜底同旧版）
         Order order = new Order();
         order.setOrderNo(orderNo)
                 .setUserId(userId)
                 .setTotalAmount(totalAmount)
-                .setPayAmount(totalAmount)
+                .setDiscountAmount(discountAmount)
+                .setCouponId(orderCreateDTO.getCouponId())
+                .setPayAmount(totalAmount.subtract(discountAmount))
                 .setFreightAmount(BigDecimal.ZERO)
                 .setOrderStatus(Constants.ORDER_STATUS_UNPAID)
                 .setPaymentStatus(0)
@@ -299,7 +326,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         orderItemMapper.insertBatch(orderItems);
         stockLogMapper.insertBatch(stockLogs);
 
-        // 7. 组装响应
+        // 7. 优惠券核销（CAS）放最后一步：并发用同一张券只有一人成功，
+        //    败者抛异常整单回滚（订单/扣减/明细一并撤销，不会"没享优惠却烧了券"）。
+        //    产品规则：核销后不返还——取消/超时/退款均不退券
+        if (orderCreateDTO.getCouponId() != null
+                && userCouponMapper.redeem(orderCreateDTO.getCouponId(), userId, orderNo) == 0) {
+            throw new BusinessException(COUPON_NOT_USABLE);          // 并发被抢先核销
+        }
+
+        // 8. 组装响应
         return buildCreateVO(order);
     }
 
@@ -310,6 +345,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.setOrderId(order.getId());
         vo.setOrderStatus(order.getOrderStatus());
         vo.setPayAmount(order.getPayAmount());
+        vo.setDiscountAmount(order.getDiscountAmount());
         vo.setCreatedAt(order.getCreatedAt());
         return vo;
     }

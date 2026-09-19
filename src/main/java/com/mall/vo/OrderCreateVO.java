@@ -28,6 +28,9 @@ public class OrderCreateVO implements Serializable {
     /** 应付金额 */
     private BigDecimal payAmount;
 
+    /** 优惠券优惠金额（未用券为 0） */
+    private BigDecimal discountAmount;
+
     /** 下单时间 */
     private LocalDateTime createdAt;
 

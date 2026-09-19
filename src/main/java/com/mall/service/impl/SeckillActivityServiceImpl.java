@@ -171,6 +171,11 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
 
     @Override
     public SeckillResultVO seckill(Long id, Long addressId, Integer quantity, Long couponId) {
+        // 0. 秒杀订单不支持用券（产品规则）：在 Lua 预扣之前 fail fast。
+        //    修复前 couponId 被静默忽略——用户选了券却无折扣无核销（高-4 的表现之一）
+        if (couponId != null) {
+            throw new BusinessException(SECKILL_COUPON_NOT_SUPPORTED);
+        }
         // 1. 活动信息（不存在的 id 在此 404；布隆拦截绝对不存在的 id）
         SeckillActivityVO activity = getSKDetail(id);
         // 2. 终止状态检查：DB 的 status 只由终止接口写 2，是运营意志，优先于时间窗推算
@@ -229,7 +234,6 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         //    随消息携带让消费者零额外查询（批内 N 条仍是 0 次查活动表）。
         msg.setSeckillPrice(activity.getSeckillPrice());
         msg.setQuantity(quantity);
-        msg.setCouponId(couponId);
         msg.setUserId(userId);
         msg.setSkuId(activity.getSkuId());
         msg.setOrderNo(String.valueOf(snowflakeIdGenerator.nextId()));

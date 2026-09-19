@@ -66,4 +66,37 @@
         ORDER BY uc.receive_time DESC
     </select>
 
+    <!-- 下单核销前校验读（3.7）：本人 + 未使用 + 未过期，联模板取类型/门槛/面额。
+         口径与 selectUsable 一致：不校验模板 status/deleted——已领到的券是承诺，
+         模板事后停用/删除不影响已领券的使用 -->
+    <select id="selectRedeemable" resultType="com.mall.vo.UserCouponVO">
+        SELECT
+            uc.id            AS user_coupon_id,
+            uc.coupon_id,
+            c.coupon_name,
+            c.type,
+            c.threshold_amount,
+            c.discount_amount,
+            uc.expire_time
+        FROM user_coupon uc
+        INNER JOIN coupon c ON c.id = uc.coupon_id
+        WHERE uc.id = #{userCouponId}
+          AND uc.user_id = #{userId}
+          AND uc.coupon_status = 0
+          AND uc.expire_time &gt; NOW()
+    </select>
+
+    <!-- 核销（CAS）：仅未使用且未过期可核销，写入核销时间与订单号；
+         并发用同一张券只有一人影响行数 1。产品规则：券一经核销不返还 -->
+    <update id="redeem">
+        UPDATE user_coupon
+        SET coupon_status = 1,
+            use_time      = NOW(),
+            order_no      = #{orderNo}
+        WHERE id = #{userCouponId}
+          AND user_id = #{userId}
+          AND coupon_status = 0
+          AND expire_time &gt; NOW()
+    </update>
+
 </mapper>

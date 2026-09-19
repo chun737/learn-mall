@@ -38,6 +38,9 @@ public class OrderDetailVO implements Serializable {
     /** 应付金额 */
     private BigDecimal payAmount;
 
+    /** 优惠券优惠金额（未用券为 0） */
+    private BigDecimal discountAmount;
+
     /** 订单备注 */
     private String remark;
 
