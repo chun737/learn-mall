@@ -38,3 +38,10 @@ build/
 docx/.workbuddy/
 docx/.fbs/
 docx/qc-output/
+
+### JMeter 本地产物 ###
+# users.csv 含压测账号明文密码，不入库（模板 users.csv.example 例外，已在库中）
+docx/jmeter/users.csv
+# 压测运行产物：HTML 报告目录与 .jtl 结果文件
+docx/jmeter/report/
+docx/jmeter/*.jtl
