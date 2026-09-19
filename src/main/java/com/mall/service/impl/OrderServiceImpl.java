@@ -633,7 +633,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Order order = orderMapper.selectOne(
                 new QueryWrapper<Order>()
                         .eq("order_no", orderNo)
-                        .eq("deleted", Constants.NOT_DELETED)
                         .last("limit 1"));
         if (order == null) {
             throw new BusinessException(ORDER_NOT_FOUND);
@@ -663,8 +662,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // 1. 校验订单存在 + 属于当前用户 + 未删除（防越权，三重条件）
         QueryWrapper<Order> orderWrapper = new QueryWrapper<Order>()
                 .eq("order_no", orderNo)
-                .eq("user_id", userId)
-                .eq("deleted", Constants.NOT_DELETED);
+                .eq("user_id", userId);
         Order order = orderMapper.selectOne(orderWrapper);
         if (order == null) {
             throw new BusinessException(ORDER_NOT_FOUND);
@@ -766,8 +764,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // 1. 先查订单，校验存在 + 归属 + 未删除（更清晰，能区分"不存在"和"状态不对"）
         QueryWrapper<Order> wrapper = new QueryWrapper<Order>()
                 .eq("order_no", orderNo)
-                .eq("user_id", userId)
-                .eq("deleted", Constants.NOT_DELETED);
+                .eq("user_id", userId);
         Order order = orderMapper.selectOne(wrapper);
         if (order == null) {
             throw new BusinessException(ORDER_NOT_FOUND);

@@ -297,8 +297,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             Long onShelfSkuCount = productSkuMapper.selectCount(
                     new LambdaQueryWrapper<ProductSku>()
                             .eq(ProductSku::getProductId, id)
-                            .eq(ProductSku::getStatus, Constants.PRODUCT_STATUS_ON_SHELF)
-                            .eq(ProductSku::getDeleted, Constants.NOT_DELETED));
+                            .eq(ProductSku::getStatus, Constants.PRODUCT_STATUS_ON_SHELF));
             if (onShelfSkuCount == null || onShelfSkuCount == 0) {
                 throw new BusinessException(ErrorCode.PRODUCT_SKU_NOT_READY);
             }
@@ -314,8 +313,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         updateSku.setStatus(status);
         productSkuMapper.update(updateSku,
                 new LambdaQueryWrapper<ProductSku>()
-                        .eq(ProductSku::getProductId, id)
-                        .eq(ProductSku::getDeleted, Constants.NOT_DELETED));
+                        .eq(ProductSku::getProductId, id));
 
         return status == Constants.PRODUCT_STATUS_ON_SHELF ? "商品上架成功" : "商品下架成功";
     }

@@ -39,7 +39,6 @@ public class SeckillStockPreloader implements ApplicationRunner {
         // 只预热未结束的活动（end_time > now 的还能抢）
         List<SeckillActivity> activities = seckillActivityMapper.selectList(
                 new LambdaQueryWrapper<SeckillActivity>()
-                        .eq(SeckillActivity::getDeleted, Constants.NOT_DELETED)
                         .gt(SeckillActivity::getEndTime, LocalDateTime.now()));
 
         int preloaded = 0;

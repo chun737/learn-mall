@@ -200,7 +200,6 @@ public class AuthServiceImpl implements AuthService {
         Role role = roleMapper.selectOne(
                 new LambdaQueryWrapper<Role>()
                         .eq(Role::getRoleCode, roleCode)
-                        .eq(Role::getDeleted, Constants.NOT_DELETED)
                         .last("limit 1")
         );
         if (role == null) {
@@ -216,7 +215,6 @@ public class AuthServiceImpl implements AuthService {
         List<UserRole> userRoles = userRoleMapper.selectList(
                 new LambdaQueryWrapper<UserRole>()
                         .eq(UserRole::getUserId, userId)
-                        .eq(UserRole::getDeleted, Constants.NOT_DELETED)
         );
         if (userRoles == null || userRoles.isEmpty()) {
             return Collections.emptyList();
@@ -227,7 +225,6 @@ public class AuthServiceImpl implements AuthService {
         List<Role> roles = roleMapper.selectList(
                 new LambdaQueryWrapper<Role>()
                         .in(Role::getId, roleIds)
-                        .eq(Role::getDeleted, Constants.NOT_DELETED)
         );
         return roles.stream()
                 .map(Role::getRoleCode)

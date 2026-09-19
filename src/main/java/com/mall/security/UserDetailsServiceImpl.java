@@ -59,7 +59,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         List<UserRole> userRoles = userRoleMapper.selectList(
                 new LambdaQueryWrapper<UserRole>()
                         .eq(UserRole::getUserId, userId)
-                        .eq(UserRole::getDeleted, Constants.NOT_DELETED)
         );
         if (userRoles == null || userRoles.isEmpty()) {
             return new ArrayList<>();
@@ -70,7 +69,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         List<Role> roles = roleMapper.selectList(
                 new LambdaQueryWrapper<Role>()
                         .in(Role::getId, roleIds)
-                        .eq(Role::getDeleted, Constants.NOT_DELETED)
         );
         return roles.stream()
                 .map(Role::getRoleCode)

@@ -64,7 +64,6 @@ public class ProductSkuServiceImpl extends ServiceImpl<ProductSkuMapper, Product
             Long dupCount = productSkuMapper.selectCount(
                     new LambdaQueryWrapper<ProductSku>()
                             .eq(ProductSku::getSkuCode, skuDTO.getSkuCode())
-                            .eq(ProductSku::getDeleted, Constants.NOT_DELETED)
                             .ne(ProductSku::getId, id));
             if (dupCount != null && dupCount > 0) {
                 throw new BusinessException(ErrorCode.SKU_CODE_EXIST);

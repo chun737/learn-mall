@@ -231,8 +231,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         }
         // 2. 先清空该用户所有地址的默认标记（条件批量更新，无需先查出全部）
         QueryWrapper<UserAddress> clearWrapper = new QueryWrapper<UserAddress>()
-                .eq("user_id", userId)
-                .eq("deleted", 0);
+                .eq("user_id", userId);
         UserAddress clear = new UserAddress();
         clear.setIsDefault(Constants.NOT_DEFAULT);
         addressMapper.update(clear, clearWrapper);
@@ -317,8 +316,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public PageResult<AdminUserVO> listUsers(Integer pageNum, Integer pageSize, String keyword) {
         // 1. 分页查询用户（按用户名/昵称模糊）
         PageUtils.startPage(pageNum, pageSize);
-        QueryWrapper<User> wrapper = new QueryWrapper<User>()
-                .eq("deleted", Constants.NOT_DELETED);
+        QueryWrapper<User> wrapper = new QueryWrapper<User>();
         if (StringUtils.hasText(keyword)) {
             wrapper.and(w -> w.like("username", keyword).or().like("nickname", keyword));
         }
@@ -359,8 +357,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Long existCount = userRoleMapper.selectCount(
                 new LambdaQueryWrapper<UserRole>()
                         .eq(UserRole::getUserId, userId)
-                        .eq(UserRole::getRoleId, role.getId())
-                        .eq(UserRole::getDeleted, Constants.NOT_DELETED));
+                        .eq(UserRole::getRoleId, role.getId()));
         if (existCount != null && existCount > 0) {
             return; // 已存在，幂等跳过
         }
@@ -379,7 +376,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         return roleMapper.selectOne(
                 new LambdaQueryWrapper<Role>()
                         .eq(Role::getRoleCode, roleCode)
-                        .eq(Role::getDeleted, Constants.NOT_DELETED)
                         .last("limit 1"));
     }
 
@@ -390,8 +386,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 查这些用户的所有关联
         List<UserRole> userRoles = userRoleMapper.selectList(
                 new LambdaQueryWrapper<UserRole>()
-                        .in(UserRole::getUserId, userIds)
-                        .eq(UserRole::getDeleted, Constants.NOT_DELETED));
+                        .in(UserRole::getUserId, userIds));
         if (userRoles.isEmpty()) {
             return Collections.emptyMap();
         }
@@ -402,8 +397,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 .collect(Collectors.toList());
         Map<Long, String> roleCodeMap = roleMapper.selectList(
                         new LambdaQueryWrapper<Role>()
-                                .in(Role::getId, roleIds)
-                                .eq(Role::getDeleted, Constants.NOT_DELETED))
+                                .in(Role::getId, roleIds))
                 .stream()
                 .collect(Collectors.toMap(Role::getId, Role::getRoleCode));
 

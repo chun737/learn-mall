@@ -48,7 +48,6 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         // 1. 一次查出所有启用且未删除的分类，按 sort 升序
         List<Category> all = lambdaQuery()
                 .eq(Category::getStatus, Constants.PRODUCT_STATUS_ON_SHELF)
-                .eq(Category::getDeleted, Constants.NOT_DELETED)
                 .orderByAsc(Category::getSort)
                 .list();
 
@@ -78,8 +77,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         // 2. 重名校验：仅查未删除的同名分类，用 selectCount 避免多条结果异常
         Long count = categoryMapper.selectCount(
                 new LambdaQueryWrapper<Category>()
-                        .eq(Category::getName, name)
-                        .eq(Category::getDeleted, Constants.NOT_DELETED));
+                        .eq(Category::getName, name));
         if (count != null && count > 0) {
             throw new BusinessException(ErrorCode.CATEGORY_NAME_EXIST);
         }
@@ -119,7 +117,6 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         // 1. 一次查出所有启用且未删除的分类，按 sort 升序
         List<Category> all = lambdaQuery()
                 .eq(Category::getStatus, Constants.PRODUCT_STATUS_ON_SHELF)
-                .eq(Category::getDeleted, Constants.NOT_DELETED)
                 .orderByAsc(Category::getSort)
                 .list();
 
@@ -155,7 +152,6 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         Long count = categoryMapper.selectCount(
                 new LambdaQueryWrapper<Category>()
                         .eq(Category::getName, name)
-                        .eq(Category::getDeleted, Constants.NOT_DELETED)
                         .ne(Category::getId, id));
         if (count != null && count > 0) {
             throw new BusinessException(ErrorCode.CATEGORY_NAME_EXIST);
@@ -213,8 +209,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         // 2. 校验是否存在未删除的子分类
         Long childCount = categoryMapper.selectCount(
                 new LambdaQueryWrapper<Category>()
-                        .eq(Category::getParentId, id)
-                        .eq(Category::getDeleted, Constants.NOT_DELETED));
+                        .eq(Category::getParentId, id));
         if (childCount != null && childCount > 0) {
             throw new BusinessException(ErrorCode.CATEGORY_DELETE_FORBIDDEN);
         }
@@ -222,8 +217,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         // 3. 校验是否存在未删除的关联商品
         Long productCount = productMapper.selectCount(
                 new LambdaQueryWrapper<Product>()
-                        .eq(Product::getCategoryId, id)
-                        .eq(Product::getDeleted, Constants.NOT_DELETED));
+                        .eq(Product::getCategoryId, id));
         if (productCount != null && productCount > 0) {
             throw new BusinessException(ErrorCode.CATEGORY_DELETE_FORBIDDEN);
         }
