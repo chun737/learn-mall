@@ -30,6 +30,12 @@ mybatis-plus:
   global-config:
     db-config:
       id-type: auto # 全局id类型为自增长
+      # 全局逻辑删除：MP 内置方法（selectById/selectOne/selectList/deleteById...）自动追加 deleted 过滤/改写。
+      # 只对"实体里有 deleted 属性"的表生效（Cart/OrderItem/Payment/StockLog 无此字段，仍是物理删除）；
+      # 手写 XML 不受本配置影响，须自己带 deleted = 0 条件
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
 
 # ⭐ 排查用：打开后控制台会打印每条 SQL 及其参数，定位"卡在哪一步"最有效。
 #   排查完记得注释掉 —— DEBUG 级日志量很大，压测时会明显拖慢吞吐。

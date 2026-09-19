@@ -174,14 +174,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             throw new BusinessException(NOT_FOUND);
         }
 
-        // 逻辑删除：deleted = 1，不物理删除
+        // 逻辑删除：@TableLogic 下 delete(wrapper) 自动改写为
+        // UPDATE user_address SET deleted=1 WHERE id=? AND user_id=? AND deleted=0（越权防护条件保留）
+        // ⭐ 不能再用 update(entity)+setDeleted：MP 会把逻辑删除字段从 SET 子句排除，只剩 updated_at 生效（静默失效）
         QueryWrapper<UserAddress> wrapper = new QueryWrapper<UserAddress>()
                 .eq("id", id)
                 .eq("user_id", userId);
-        UserAddress update = new UserAddress();
-        update.setDeleted(Constants.DELETED);
-        update.setUpdatedAt(LocalDateTime.now());
-        addressMapper.update(update, wrapper);
+        addressMapper.delete(wrapper);
     }
 
     @Override
@@ -307,14 +306,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (role == null) {
             throw new BusinessException(ROLE_NOT_FOUND);
         }
-        // 3. 逻辑删除该用户与角色的关联
-        UserRole update = new UserRole();
-        update.setDeleted(Constants.DELETED);
-        userRoleMapper.update(update,
-                new LambdaQueryWrapper<UserRole>()
-                        .eq(UserRole::getUserId, dto.getUserId())
-                        .eq(UserRole::getRoleId, role.getId())
-                        .eq(UserRole::getDeleted, Constants.NOT_DELETED));
+        // 3. 逻辑删除该用户与角色的关联（@TableLogic 下 delete(wrapper) 自动改写为 UPDATE deleted=1，
+        //    并自动追加 deleted=0 条件；原 setDeleted+update 写法会把 deleted 排除出 SET 子句而静默失效）
+        userRoleMapper.delete(new LambdaQueryWrapper<UserRole>()
+                .eq(UserRole::getUserId, dto.getUserId())
+                .eq(UserRole::getRoleId, role.getId()));
     }
 
     @Override

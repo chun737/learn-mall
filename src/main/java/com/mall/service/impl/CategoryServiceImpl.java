@@ -228,10 +228,10 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
             throw new BusinessException(ErrorCode.CATEGORY_DELETE_FORBIDDEN);
         }
 
-        // 4. 逻辑删除
-        category.setDeleted(Constants.DELETED);
-        category.setUpdatedAt(LocalDateTime.now());
-        categoryMapper.updateById(category);
+        // 4. 逻辑删除：@TableLogic 下 deleteById 自动改写为
+        //    UPDATE category SET deleted=1 WHERE id=? AND deleted=0
+        //    ⭐ 不能再用 setDeleted+updateById：MP 把逻辑删除字段排除出 SET 子句，会静默失效
+        categoryMapper.deleteById(category.getId());
     }
 
     /**

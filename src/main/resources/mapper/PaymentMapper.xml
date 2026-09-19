@@ -42,6 +42,7 @@
             updated_at     = NOW()
         WHERE payment_no = #{paymentNo}
           AND pay_status = 0
+          AND deleted = 0
     </update>
 
     <!-- 累计退款（CAS）：单条语句内完成"累计校验+写入"，支持部分退款；退满自动置为已退款(3) -->
@@ -52,6 +53,7 @@
             updated_at    = NOW()
         WHERE payment_no = #{paymentNo}
           AND pay_status = 1
+          AND deleted = 0
           AND IFNULL(refund_amount, 0) + #{refundAmount} &lt;= amount
     </update>
 </mapper>

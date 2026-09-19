@@ -169,6 +169,7 @@
             updated_at     = NOW()
         WHERE id = #{id}
           AND order_status = 0
+          AND deleted = 0
     </update>
     <!-- 取消未支付订单（CAS）：并发取消只有一次生效，已支付订单在此被拒绝 -->
     <update id="cancelUnpaid">
@@ -189,6 +190,7 @@
             updated_at     = NOW()
         WHERE id = #{id}
           AND order_status IN (1, 2)
+          AND deleted = 0
     </update>
     <!-- 定时任务数据源：超时未支付订单（分批限量；需索引 idx_status_created） -->
     <select id="selectTimeoutUnpaid" resultType="com.mall.entity.Order">
@@ -207,6 +209,15 @@
             updated_at   = NOW()
         WHERE id = #{id}
           AND order_status = 0
+          AND deleted = 0
+    </update>
+
+    <!-- 逻辑删除订单（CAS）：仅未删除行生效；只更新 deleted/updated_at，不做整行覆盖 -->
+    <update id="markDeleted">
+        UPDATE `order`
+        SET deleted    = 1,
+            updated_at = NOW()
+        WHERE id = #{id}
           AND deleted = 0
     </update>
 </mapper>

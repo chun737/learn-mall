@@ -702,18 +702,38 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void deleteOrder(String orderNo) {
         Long userId = SecurityUtils.getUserId();
-        QueryWrapper<Order> wrapper = new QueryWrapper<Order>()
+        // selectOne 自动追加 deleted=0（@TableLogic）：已删除订单在这里直接查不到
+        Order order = orderMapper.selectOne(new QueryWrapper<Order>()
                 .eq("order_no", orderNo)
-                .eq("user_id", userId);
-        Order order = orderMapper.selectOne(wrapper);
-        if (order == null || order.getDeleted() == Constants.DELETED) {
+                .eq("user_id", userId));
+        if (order == null) {
             throw new BusinessException(ORDER_NOT_FOUND);
         }
-        order.setDeleted(Constants.DELETED);
-        order.setUpdatedAt(LocalDateTime.now());
-        orderMapper.updateById(order);
+
+        // 状态闸门（堵"订单消失但库存不还"的泄漏）：
+        // - 待支付(0)：先 CAS 取消（抢到才删）→ 回补库存 → 再删。旧实现不校验状态直接删，
+        //   待支付单被删后超时任务永远扫不到，扣掉的库存永久占用（少卖且无对账手段）
+        // - 待发货(1)/已发货(2)：资金/物流在途，禁止删除（必须走退款/收货流程）
+        // - 已完成(3)/已取消(4)/已退款(5)：终态，允许清理
+        if (order.getOrderStatus() == Constants.ORDER_STATUS_UNPAID) {
+            int rows = orderMapper.cancelUnpaid(orderNo, userId);
+            if (rows == 0) {
+                // 竞态：支付/取消已抢先翻转状态，本请求按"状态不对"失败
+                throw new BusinessException(ORDER_STATUS_ERROR);
+            }
+            restoreStockAndLog(order);
+        } else if (order.getOrderStatus() == Constants.ORDER_STATUS_PAID
+                || order.getOrderStatus() == Constants.ORDER_STATUS_SHIPPED) {
+            throw new BusinessException(ORDER_STATUS_ERROR);
+        }
+
+        // CAS 逻辑删除：只 SET deleted/updated_at 两列，并发删除只有一次生效
+        if (orderMapper.markDeleted(order.getId()) == 0) {
+            throw new BusinessException(ORDER_NOT_FOUND);
+        }
     }
     /**
      * 订单状态 -> 文本

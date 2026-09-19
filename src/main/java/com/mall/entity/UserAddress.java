@@ -1,6 +1,7 @@
 package com.mall.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -95,6 +96,7 @@ public class UserAddress implements Serializable {
     /**
      * 逻辑删除：0=未删除 1=已删除
      */
+    @TableLogic
     @TableField("deleted")
     private Integer deleted;
 

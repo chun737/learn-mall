@@ -3,6 +3,7 @@ package com.mall.entity;
 import java.math.BigDecimal;
 
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -121,6 +122,7 @@ public class Coupon implements Serializable {
     /**
      * 逻辑删除：0=正常 1=已删除
      */
+    @TableLogic
     @TableField("deleted")
     private Integer deleted;
 

@@ -84,4 +84,10 @@ public interface OrderMapper extends BaseMapper<Order> {
      * 系统取消未支付订单（CAS）：仅"待支付(0)"可翻转，与支付路径（markPaidById）互斥
      */
     int cancelUnpaidById(@Param("id") Long id);
+
+    /**
+     * 逻辑删除订单（CAS）：仅未删除的行生效。
+     * 只 SET deleted/updated_at 两列，不做整行覆盖，避免把并发变更的其他列写回旧快照。
+     */
+    int markDeleted(@Param("id") Long id);
 }
