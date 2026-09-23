@@ -39,6 +39,20 @@ docx/.workbuddy/
 docx/.fbs/
 docx/qc-output/
 
+### 个人隐私/本地临时文件（不上传 GitHub）###
+简历/
+_es_check.py
+_measure.py
+_build_and_measure.py
+jmeter.log
+*.jtl
+*.log
+
+### 文档/笔记目录（仅本地保留，不入库）###
+docs/
+docx/
+agent.md
+
 ### JMeter 本地产物 ###
 # users.csv 含压测账号明文密码，不入库（模板 users.csv.example 例外，已在库中）
 docx/jmeter/users.csv

@@ -7,9 +7,13 @@ import com.mall.vo.ProductListVO;
  * 商品搜索服务（Elasticsearch）接口：索引写入与查询的唯一出口。
  *
  * 为什么独立成一个服务，而不是塞进 IProductService：
- *   ES 是"可选依赖"——索引未建、ES 未启动时搜索会降级返回空，
- *   由上层兜底走 MySQL（见 ProductSearchServiceImpl 的异常处理）。
+ *   ES 是"可选依赖"——索引未建、ES 未启动、或连续失败触发熔断时，
+ *   搜索会抛 {@link com.mall.common.EsUnavailableException} 交由上层兜底走 MySQL。
  *   把"搜索"和"商品 CRUD"分开，ES 故障的影响面就限制在这一个接口里。
+ *
+ * 异常约定（上层按此决定要不要降级）：
+ * - searchProducts / importAll：ES 不可用时**抛** EsUnavailableException；
+ * - syncProductById / deleteByProductId：ES 不可用时**静默跳过**（只记日志），永不抛出。
  *
  * @author 乐乐
  */
@@ -26,10 +30,11 @@ public interface IProductSearchService {
     /**
      * 单条同步：按商品 ID 从 MySQL 取最新数据写入 ES。
      * MySQL 里已查不到（下架/删除）时，改为删除 ES 中的旧文档。
+     * 同步是"尽力而为"的旁路：ES 不可用时静默跳过，不会抛异常打断商品增删改。
      */
     void syncProductById(Long productId);
 
-    /** 按商品 ID 删除 ES 文档 */
+    /** 按商品 ID 删除 ES 文档（同样静默失败，不抛异常） */
     void deleteByProductId(Long productId);
 
     /**
@@ -40,7 +45,7 @@ public interface IProductSearchService {
      * @param sortBy     排序方式：default/priceAsc/priceDesc/salesDesc/newest
      * @param pageNum    页码，从 1 开始
      * @param pageSize   每页条数
-     * @return 分页结果；ES 异常时降级返回空列表（不抛异常，由上层走 MySQL 兜底）
+     * @return 分页结果；ES 不可用时抛 EsUnavailableException，由上层降级走 MySQL
      */
     PageResult<ProductListVO> searchProducts(Long categoryId, String keyword,
                                              String sortBy, int pageNum, int pageSize);
