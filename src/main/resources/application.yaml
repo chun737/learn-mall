@@ -5,7 +5,8 @@ spring:
     username: root
     password: ${DB_PASSWORD}
     url: jdbc:mysql://localhost:3306/ecommerce_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    driver-class-name: com.mysql.jdbc.Driver
+    # MySQL 8 驱动类名（旧类名 com.mysql.jdbc.Driver 已废弃，仅靠兼容层才不报错）
+    driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
       host: localhost
@@ -37,11 +38,11 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
-# ⭐ 排查用：打开后控制台会打印每条 SQL 及其参数，定位"卡在哪一步"最有效。
-#   排查完记得注释掉 —— DEBUG 级日志量很大，压测时会明显拖慢吞吐。
-logging:
-  level:
-    com.mall.mapper: debug
+# ⭐ 排查用（默认关闭）：需要时取消下面三行注释，控制台会打印每条 SQL 及其参数，
+#   定位"卡在哪一步"最有效。排查完记得再注释掉 —— DEBUG 级日志量很大，压测时会明显拖慢吞吐。
+# logging:
+#   level:
+#     com.mall.mapper: debug
 
 # PageHelper 分页插件配置
 pagehelper:
