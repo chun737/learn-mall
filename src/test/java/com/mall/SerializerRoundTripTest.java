@@ -14,16 +14,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 临时验证脚本：确认 GenericJacksonJsonRedisSerializer（Jackson 3）对本项目三个被缓存的
- * VO 结构能正确往返序列化。验证完成后可删除。
- */
 public class SerializerRoundTripTest {
 
     public static void main(String[] args) {
         GenericJacksonJsonRedisSerializer serializer = GenericJacksonJsonRedisSerializer.builder()
-                // 开启多态类型信息（@class），白名单限定为本项目类 + JDK 集合/基础类型，
-                // 防御反序列化 gadget 攻击（比老版本的 LaissezFaire 全放行更安全）
                 .enableDefaultTyping(BasicPolymorphicTypeValidator.builder()
                         .allowIfSubType("com.mall.")
                         .allowIfSubType("java.util.")
@@ -32,7 +26,6 @@ public class SerializerRoundTripTest {
                         .build())
                 .build();
 
-        // 1. PageResult<ProductListVO> —— 商品列表缓存
         ProductListVO p = new ProductListVO();
         p.setId(1L);
         p.setProductName("测试商品");
@@ -44,7 +37,6 @@ public class SerializerRoundTripTest {
                 + " 元素=" + pr2.getList().get(0).getClass().getSimpleName()
                 + " total=" + pr2.getTotal());
 
-        // 2. ProductDetailVO（含 SKU 列表 + BigDecimal）—— 商品详情缓存
         SkuVO sku = new SkuVO();
         sku.setId(2L);
         sku.setSpecs("红色/L");
@@ -59,9 +51,6 @@ public class SerializerRoundTripTest {
                 + " price=" + d2.getSkus().get(0).getPrice()
                 + " specs=" + d2.getSkus().get(0).getSpecs());
 
-        // 3. List<CategoryVO> —— 分类树缓存（递归结构）
-        // 注意：必须用 ArrayList（与 CategoryServiceImpl 的 Collectors.toList() 一致）。
-        // List.of() 返回的不可变集合是 final 类且无私有构造器，Jackson 无法反序列化重建
         CategoryVO child = new CategoryVO();
         child.setId(3L);
         child.setName("子分类");
@@ -77,8 +66,6 @@ public class SerializerRoundTripTest {
                 + " child=" + root2.getChildren().get(0).getClass().getSimpleName()
                 + " name=" + root2.getChildren().get(0).getName());
 
-        // 4. List<SeckillActivityVO> —— 秒杀活动列表缓存（首个含 LocalDateTime 字段的缓存 VO：
-        //    白名单无 java.time.，验证字段按声明类型反序列化不经过白名单是否成立）
         SeckillActivityVO act = new SeckillActivityVO();
         act.setId(301L);
         act.setActivityName("iPhone 限时秒杀");
