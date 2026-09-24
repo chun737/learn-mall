@@ -167,8 +167,10 @@ public class SeckillCompensator {
             try {
                 msg = decode(member);
             } catch (Exception e) {
-                // 格式非法的条目永远补不了，出队丢弃，避免死循环占用
-                log.error("待补偿条目格式非法，已丢弃: {}", member, e);
+                // 格式或取值非法的条目永远补不了：它们会被 COMPENSATE_SCRIPT 判为 -1，
+                // 而 -1 在 restore() 里是"抛异常"语义 —— 条目会被当成可重试异常永久留在
+                // ZSET 里，每轮定时任务重试一次却永远出不了队。所以这里直接出队丢弃。
+                log.error("待补偿条目格式或取值非法，已丢弃: {}", member, e);
                 stringRedisTemplate.opsForZSet().remove(SECKILL_COMPENSATE_PENDING_KEY, member);
                 continue;
             }
@@ -221,6 +223,14 @@ public class SeckillCompensator {
         return msg.getActivityId() + "|" + msg.getUserId() + "|" + msg.getQuantity() + "|" + msg.getOrderNo();
     }
 
+    /**
+     * 待补偿条目解码 + 取值校验。
+     *
+     * <p>取值校验不能省：COMPENSATE_SCRIPT 对 {@code qty <= 0}、空 userId 会返回 {@code -1}，
+     * 而 {@code -1} 在 {@link #restore} 里被当成"Redis 回补失败"抛异常 —— 条目于是被当作可重试
+     * 异常留在 ZSET，每轮定时任务重试一次却永远出不了队（且每轮刷一条 ERROR 日志）。
+     * 在这里提前拒绝，让它走调用方的"格式或取值非法 → 出队丢弃"分支。
+     */
     private SeckillOrderMessage decode(String member) {
         String[] parts = member.split("\\|");
         if (parts.length != 4) {
@@ -231,6 +241,11 @@ public class SeckillCompensator {
         msg.setUserId(Long.valueOf(parts[1]));
         msg.setQuantity(Integer.valueOf(parts[2]));
         msg.setOrderNo(parts[3]);
+        if (msg.getActivityId() <= 0 || msg.getUserId() <= 0
+                || msg.getQuantity() <= 0
+                || msg.getOrderNo() == null || msg.getOrderNo().isBlank()) {
+            throw new IllegalArgumentException("invalid field value: " + member);
+        }
         return msg;
     }
 }

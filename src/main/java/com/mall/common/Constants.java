@@ -110,14 +110,15 @@ public final class Constants {
     private static final String SECKILL_RESULT_PREFIX = CACHE_PREFIX + "seckill:result:";
 
     // ---- 秒杀库存 / 已购 key 构造（Redis Cluster 适配）----
-    // EVAL 多 KEYS 必须落在同一 slot（否则 CROSSSLOT），故用 {act:{activityId}} 哈希标签圈住活动 id，
-    // 保证同活动的 stock / bought 两个 key 落在同一 slot；单机 Redis 行为等价，key 只是换了命名。
-    /** 秒杀库存计数 key（Lua KEYS[1]）：seckill:{act:{id}}:stock */
+    // EVAL 多 KEYS 必须落在同一 slot（否则 CROSSSLOT），故用 {act:<id>} 哈希标签圈住活动 id，
+    // 保证同活动的 stock / bought / result / gate 四个 key 落在同一 slot（补偿 Lua 会同时操作它们）；
+    // 单机 Redis 行为等价，key 只是换了命名。
+    /** 秒杀库存计数 key（Lua KEYS[1]）：seckill:{act:<id>}:stock */
     public static String seckillStockKey(Long activityId) {
         return "seckill:{act:" + activityId + "}:stock";
     }
 
-    /** 秒杀已购数量 hash key（Lua KEYS[2]）：seckill:{act:{id}}:bought */
+    /** 秒杀已购数量 hash key（Lua KEYS[2]）：seckill:{act:<id>}:bought */
     public static String seckillBoughtKey(Long activityId) {
         return "seckill:{act:" + activityId + "}:bought";
     }
@@ -357,6 +358,9 @@ public final class Constants {
     public static final int SECKILL_STATUS_ENDED = 2;
 
     // ==================== 秒杀下单结果 ====================
+    // 同一语义有两套标识符，别混用：
+    //   · 上面的 int 是「对外 API 返回码」，给前端轮询 getResult 用；
+    //   · 下面的 String 是「Redis 结果 hash 里的协议值」，_VALUE 供 Java 侧比较、_JSON 供写入 Redis。
     /** 秒杀下单：排队中（异步落库削峰） */
     public static final int SECKILL_RESULT_QUEUING = 0;
     /** 秒杀下单：成功（返回 orderNo） */
@@ -365,10 +369,19 @@ public final class Constants {
     public static final int SECKILL_RESULT_FAILED = 2;
     /** 秒杀结果查询：没有抢购记录 */
     public static final int SECKILL_RESULT_NONE = 3;
-    /** Redis 结果 hash 中的协议值；Lua 通过 JSON_VALUE 常量参数写入。 */
+
+    // ---- Redis 结果 hash 的协议值：读用 _VALUE（无引号），写用 _JSON（带 JSON 双引号）----
+    // 为什么写要带引号：结果 hash 由 RedisTemplate 的 GenericJackson2JsonRedisSerializer 读写，
+    // 而 Lua 里是直接 HSET 裸字符串的 —— 必须自己补上 JSON 引号，写进去的值才和序列化器期望的
+    // 形式一致（读回 Java 侧就是不带引号的 _VALUE）。写错会静默失效：getResult 判不出状态，
+    // 用户永远看到"无抢购记录"。
+    /** 排队中：Java 侧比较用（无引号） */
     public static final String SECKILL_RESULT_QUEUING_VALUE = "QUEUING";
+    /** 下单失败：Java 侧比较用（无引号） */
     public static final String SECKILL_RESULT_FAILED_VALUE = "FAILED";
+    /** 排队中：写 Redis 用（带 JSON 双引号，见上方说明） */
     public static final String SECKILL_RESULT_QUEUING_JSON = "\"QUEUING\"";
+    /** 下单失败：写 Redis 用（带 JSON 双引号，见上方说明） */
     public static final String SECKILL_RESULT_FAILED_JSON = "\"FAILED\"";
 
     // ==================== 订单来源 ====================

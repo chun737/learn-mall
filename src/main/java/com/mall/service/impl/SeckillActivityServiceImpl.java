@@ -71,7 +71,10 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
     private final IOrderService orderService;
     private final ProductSkuMapper productSkuMapper;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
-    /** 秒杀原子预扣脚本：KEYS[库存key, 已购集合key, 结果key]，ARGV[userId, 数量, 限购] */
+    /**
+     * 秒杀原子预扣脚本：KEYS[库存 key, 已购 hash, 结果 hash]，
+     * ARGV[userId, 购买数量, 限购数, bought/result key 的 TTL（秒）, JSON 编码的排队状态值]
+     */
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     // 活动列表/详情的缓存 key 与 TTL 定义在 Constants（SECKILL_LIST_KEY / TTL_SECKILL_LIST / SECKILL_DETAIL_KEY_PREFIX / TTL_SECKILL_DETAIL / MAX_PAGE_SIZE）
     // 布隆过滤器机制在 BloomFilterRegistry（本业务声明见 SeckillBloomIndex）
@@ -202,9 +205,10 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         String resultKey = Constants.seckillResultKey(id);
         int perLimit = activity.getPerLimit() != null && activity.getPerLimit() > 0 ? activity.getPerLimit() : 1;
         Duration seckillKeyTtl = Constants.seckillKeyTtl(activity.getEndTime());
-        // ARGV 用 StringRedisSerializer：GenericJacksonJsonRedisSerializer 默认带 @class 类型信息，
-        // 会把 "1" 序列化成 "java.lang.String":"\"1\""，Lua 端 tonumber('"1"') 返回 nil → 触发 -3（参数非法）。
-        // 这里固定走字符串序列化，Lua 才能正常解析数字
+        // ARGV 必须走字符串序列化：默认的 GenericJackson2JsonRedisSerializer 会把 Java 的 String
+        // 写成带双引号的 JSON 字符串（"1"），Lua 端 tonumber('"1"') 返回 nil。
+        // 注意原因不是 @class / 类型信息：Integer、Long、String 都是 final 类，
+        // DefaultTyping.NON_FINAL 不会给它们写类型信息（实测序列化 Integer 1 得到的就是 1）。
         Long result = redisTemplate.execute(
                 SECKILL_SCRIPT,
                 RedisSerializer.string(),
@@ -212,7 +216,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
                 List.of(key1, key2, resultKey),
                 userId.toString(), String.valueOf(quantity), String.valueOf(perLimit),
                 String.valueOf(seckillKeyTtl.getSeconds()), Constants.SECKILL_RESULT_QUEUING_JSON);
-        // 脚本约定：1=成功 -1=库存不足 -2=超限购 -3=参数非法
+        // 脚本约定：1=成功 -1=库存不足 -2=超限购 -3=用户参数非法 -4=服务端参数缺失
         if (result == null) {
             throw new BusinessException(SYSTEM_ERROR);
         }
@@ -224,6 +228,10 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         }
         if (result == -3) {
             throw new BusinessException(PARAM_ERROR);
+        }
+        if (result == -4) {
+            // keyTtl / 排队状态值由服务端常量传入，缺失属系统问题，不能报成"参数错误"误导排查方向
+            throw new BusinessException(SYSTEM_ERROR);
         }
         //利用rocketmq异步解耦支付与秒杀
         SeckillOrderMessage msg = new SeckillOrderMessage();
