@@ -91,7 +91,7 @@ public class SeckillOrderConsumer implements RocketMQListener<SeckillOrderMessag
         } else {
             // 写入 redis 结果（重复消息重复写同值，幂等无害）
             redisTemplate.opsForHash().put(
-                    SECKILL_RESULT_PREFIX + msg.getActivityId(),
+                    Constants.seckillResultKey(msg.getActivityId()),
                     msg.getUserId().toString(), msg.getOrderNo());
         }
     }

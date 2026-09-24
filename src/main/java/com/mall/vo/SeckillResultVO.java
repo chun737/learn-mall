@@ -15,7 +15,7 @@ public class SeckillResultVO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /** 结果：0=排队中（异步模式） 1=下单成功 2=无抢购记录（结果查询） */
+    /** 结果：0=排队中，1=下单成功，2=下单失败，3=无抢购记录 */
     private Integer seckillResult;
 
     /** 结果文本 */

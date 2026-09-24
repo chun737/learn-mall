@@ -71,7 +71,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
     private final IOrderService orderService;
     private final ProductSkuMapper productSkuMapper;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
-    /** 秒杀原子预扣脚本：KEYS[库存key, 已购集合key]，ARGV[userId, 数量]，返回 1/-1/-2 */
+    /** 秒杀原子预扣脚本：KEYS[库存key, 已购集合key, 结果key]，ARGV[userId, 数量, 限购] */
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     // 活动列表/详情的缓存 key 与 TTL 定义在 Constants（SECKILL_LIST_KEY / TTL_SECKILL_LIST / SECKILL_DETAIL_KEY_PREFIX / TTL_SECKILL_DETAIL / MAX_PAGE_SIZE）
     // 布隆过滤器机制在 BloomFilterRegistry（本业务声明见 SeckillBloomIndex）
@@ -199,7 +199,9 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         // KEYS[1] 必须是库存 key（脚本对它 GET/DECRBY），传详情缓存 key 会把缓存当库存扣坏
         String key1 = Constants.seckillStockKey(id);
         String key2 = Constants.seckillBoughtKey(id);
+        String resultKey = Constants.seckillResultKey(id);
         int perLimit = activity.getPerLimit() != null && activity.getPerLimit() > 0 ? activity.getPerLimit() : 1;
+        Duration seckillKeyTtl = Constants.seckillKeyTtl(activity.getEndTime());
         // ARGV 用 StringRedisSerializer：GenericJacksonJsonRedisSerializer 默认带 @class 类型信息，
         // 会把 "1" 序列化成 "java.lang.String":"\"1\""，Lua 端 tonumber('"1"') 返回 nil → 触发 -3（参数非法）。
         // 这里固定走字符串序列化，Lua 才能正常解析数字
@@ -207,8 +209,9 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
                 SECKILL_SCRIPT,
                 RedisSerializer.string(),
                 null,
-                List.of(key1, key2),
-                userId.toString(), String.valueOf(quantity), String.valueOf(perLimit));
+                List.of(key1, key2, resultKey),
+                userId.toString(), String.valueOf(quantity), String.valueOf(perLimit),
+                String.valueOf(seckillKeyTtl.getSeconds()), Constants.SECKILL_RESULT_QUEUING_JSON);
         // 脚本约定：1=成功 -1=库存不足 -2=超限购 -3=参数非法
         if (result == null) {
             throw new BusinessException(SYSTEM_ERROR);
@@ -278,22 +281,32 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         String orderNo = null;
         try {
             Object cached = redisTemplate.opsForHash()
-                    .get(Constants.SECKILL_RESULT_PREFIX + activityId, SecurityUtils.getUserId().toString());
+                    .get(Constants.seckillResultKey(activityId), SecurityUtils.getUserId().toString());
             if (cached instanceof String s) {
+                if (Constants.SECKILL_RESULT_QUEUING_VALUE.equals(s)) {
+                    vo.setSeckillResult(Constants.SECKILL_RESULT_QUEUING);
+                    vo.setSeckillResultText("排队中");
+                    return vo;
+                }
+                if (Constants.SECKILL_RESULT_FAILED_VALUE.equals(s)) {
+                    vo.setSeckillResult(Constants.SECKILL_RESULT_FAILED);
+                    vo.setSeckillResultText("下单失败");
+                    return vo;
+                }
                 orderNo = s;
             }
         } catch (Exception ignored) {
             // Redis 故障按无记录处理，用户可在订单列表核实
         }
         if (orderNo == null) {
-            vo.setSeckillResult(2);
+            vo.setSeckillResult(Constants.SECKILL_RESULT_NONE);
             vo.setSeckillResultText("无抢购记录");
             return vo;
         }
         Order order = orderService.getOne(new LambdaQueryWrapper<Order>()
                 .eq(Order::getOrderNo, orderNo), false);
         if (order == null) {
-            vo.setSeckillResult(2);
+            vo.setSeckillResult(Constants.SECKILL_RESULT_NONE);
             vo.setSeckillResultText("无抢购记录");
             return vo;
         }
@@ -439,6 +452,7 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         // 1. 删除购买路径的 Redis 数据：stock 没了 Lua 立即快速失败，bought 顺带清容器
         redisTemplate.delete(Constants.seckillStockKey(id));
         redisTemplate.delete(Constants.seckillBoughtKey(id));
+        redisTemplate.delete(Constants.seckillResultKey(id));
         // 2. 逐出详情/列表缓存：否则最长 60 秒内页面仍显示"进行中 + 倒计时"
         redisTemplate.delete(Constants.SECKILL_DETAIL_KEY_PREFIX + id);
         redisTemplate.delete(Constants.SECKILL_LIST_KEY);

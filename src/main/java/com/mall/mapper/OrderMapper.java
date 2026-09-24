@@ -23,6 +23,11 @@ import java.util.List;
 public interface OrderMapper extends BaseMapper<Order> {
 
     /**
+     * 秒杀补偿前的订单存在性复核：显式包含逻辑删除行，避免误把已建单的历史订单当成未建单。
+     */
+    int countByOrderNoIncludingDeleted(@Param("orderNo") String orderNo);
+
+    /**
      * 订单列表：联查 order_item，聚合出商品总数量 + 首条商品摘要
      * （配合 PageHelper 分页使用，SQL 本身不写 LIMIT）
      */

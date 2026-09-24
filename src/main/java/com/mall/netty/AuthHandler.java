@@ -16,11 +16,11 @@ import java.util.List;
 public class AuthHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     /**
-     * 本地测试后门：DEMO-1（用户）、DEMO-9-admin（客服）。
-     * 想关掉：加 VM 参数 -Dnetty.demo.auth=false，或设环境变量 NETTY_DEMO_AUTH=false。
+     * 本地测试后门：仅显式开启后接受 DEMO-1（用户）、DEMO-9-admin（客服）。
+     * 开启方式：VM 参数 -Dnetty.demo.auth=true，或环境变量 NETTY_DEMO_AUTH=true。
      */
     private static final boolean DEMO_ENABLED =
-            !"false".equalsIgnoreCase(resolveDemoSwitch());
+            "true".equalsIgnoreCase(resolveDemoSwitch());
 
     private static String resolveDemoSwitch() {
         String prop = System.getProperty("netty.demo.auth");
@@ -28,7 +28,7 @@ public class AuthHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             return prop.trim();
         }
         String env = System.getenv("NETTY_DEMO_AUTH");
-        return (env == null) ? "true" : env.trim();
+        return (env == null) ? "false" : env.trim();
     }
 
     @Override
@@ -41,18 +41,17 @@ public class AuthHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         Long userId = null;
         String role = null;
 
-        // ---------- ① 本地测试后门（正式环境用 -Dnetty.demo.auth=false 关掉）----------
-        if (DEMO_ENABLED && token.startsWith("DEMO-")) {
-            // token 形如 DEMO-1（用户）或 DEMO-9-admin（客服）：
-            // 先截掉 "DEMO-" 前缀，再取第一个 '-' 之前的数字当 userId
-            try {
-                String raw = token.substring("DEMO-".length());   // "1" 或 "9-admin"
-                int dash = raw.indexOf('-');
-                String idPart = (dash >= 0) ? raw.substring(0, dash) : raw;
-                userId = Long.valueOf(idPart);
-                role = token.contains("admin") ? "ADMIN" : "USER";
-            } catch (RuntimeException e) {
-                System.out.println("[Netty] DEMO token 格式不对，应为 DEMO-<数字>[-admin]，收到: " + token);
+        // ---------- ① 本地测试后门（默认关闭，必须显式用 -Dnetty.demo.auth=true 开启）----------
+        if (DEMO_ENABLED) {
+            // 只允许固定测试账号，避免开启开关后通过 DEMO token 冒充任意用户或管理员。
+            if ("DEMO-1".equals(token)) {
+                userId = 1L;
+                role = "USER";
+            } else if ("DEMO-9-admin".equals(token)) {
+                userId = 9L;
+                role = "ADMIN";
+            } else if (token.startsWith("DEMO-")) {
+                System.out.println("[Netty] 拒绝未知 DEMO token，允许值为 DEMO-1 或 DEMO-9-admin");
             }
         }
 

@@ -77,7 +77,9 @@ public class SecurityConfig {
                                 "/categories/**",
                                 "/product",
                                 "/categories",
-                                "/seckill/**"
+                                "/seckill",
+                                // 仅公开活动列表和单段 ID 的活动详情；/seckill/{id}/result 仍需登录
+                                "/seckill/*"
                         ).permitAll()
                         // 后台接口需要 ADMIN 角色
                         .requestMatchers("/admin/**").hasRole(Constants.ROLE_ADMIN)

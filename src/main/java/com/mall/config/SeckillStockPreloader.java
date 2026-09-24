@@ -50,6 +50,15 @@ public class SeckillStockPreloader implements ApplicationRunner {
             Duration ttl = Constants.seckillKeyTtl(activity.getEndTime());
             // setIfAbsent = SETNX：key 不存在才写入，已存在不覆盖（保留已消耗库存）
             Boolean absent = redisTemplate.opsForValue().setIfAbsent(key, activity.getAvailableStock(), ttl);
+            // 兼容历史活动已经创建但没有 TTL 的 bought/result hash；新抢购由 Lua 在首次写入时设置 TTL。
+            String boughtKey = Constants.seckillBoughtKey(activity.getId());
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(boughtKey))) {
+                redisTemplate.expire(boughtKey, ttl);
+            }
+            String resultKey = Constants.seckillResultKey(activity.getId());
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(resultKey))) {
+                redisTemplate.expire(resultKey, ttl);
+            }
             if (Boolean.TRUE.equals(absent)) {
                 preloaded++;
             } else {

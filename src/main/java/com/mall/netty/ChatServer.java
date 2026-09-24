@@ -21,7 +21,8 @@ import io.netty.util.concurrent.EventExecutorGroup;
  * 代价是<b>不能用 Spring 注入</b> —— 所以 JWT 校验走 {@link StandaloneJwt}、
  * 落库走 {@link ChatDb}，两者都自己从 {@link AppConfig} 读配置，见教程 7.1 / 7.3。
  *
- * <p>本地测试：直接 Run main。用 DEMO token（DEMO-1 / DEMO-9-admin）不需要配任何密钥；
+ * <p>本地测试：直接 Run main，并显式设置 {@code -Dnetty.demo.auth=true} 后，
+ * 用固定 DEMO token（DEMO-1 / DEMO-9-admin）不需要配任何密钥；
  * 想验真实 token，必须让本进程拿到与 Spring 侧一致的 JWT_SECRET。
  *
  * <p>端口可覆盖：VM 参数 {@code -Dnetty.chat.port=9090} 或环境变量 {@code NETTY_CHAT_PORT}。

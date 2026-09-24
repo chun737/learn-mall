@@ -106,8 +106,8 @@ public final class Constants {
     public static final String CACHE_PREFIX = "mall:";
     /** 秒杀活动信息缓存 key 前缀（读多写少） */
     public static final String SECKILL_INFO_PREFIX = "seckill:info:";
-    /** 秒杀抢购结果 key 前缀（hash，field=userId，value=orderNo），完整 key = SECKILL_RESULT_PREFIX + activityId */
-    public static final String SECKILL_RESULT_PREFIX = CACHE_PREFIX + "seckill:result:";
+    /** 秒杀抢购结果 key 前缀（仅由 seckillResultKey 组装，避免调用方绕过 hash tag） */
+    private static final String SECKILL_RESULT_PREFIX = CACHE_PREFIX + "seckill:result:";
 
     // ---- 秒杀库存 / 已购 key 构造（Redis Cluster 适配）----
     // EVAL 多 KEYS 必须落在同一 slot（否则 CROSSSLOT），故用 {act:{activityId}} 哈希标签圈住活动 id，
@@ -121,12 +121,27 @@ public final class Constants {
     public static String seckillBoughtKey(Long activityId) {
         return "seckill:{act:" + activityId + "}:bought";
     }
+
+    /**
+     * 秒杀结果 key：使用与库存/已购 key 相同的 hash tag，保证补偿 Lua 可以跨三处状态原子执行。
+     */
+    public static String seckillResultKey(Long activityId) {
+        return SECKILL_RESULT_PREFIX + "{act:" + activityId + "}";
+    }
     /** 秒杀活动列表缓存 key（全量列表，60 秒短 TTL 应对状态时间流转） */
     public static final String SECKILL_LIST_KEY = CACHE_PREFIX + "seckill:list";
     /** 秒杀活动详情缓存 key 前缀，完整 key = SECKILL_DETAIL_KEY_PREFIX + activityId */
     public static final String SECKILL_DETAIL_KEY_PREFIX = CACHE_PREFIX + "seckill:detail:";
-    /** 秒杀补偿幂等闸门 key 前缀：完整 key = SECKILL_COMPENSATED_PREFIX + orderNo，SETNX 抢到才有资格回补 */
-    public static final String SECKILL_COMPENSATED_PREFIX = CACHE_PREFIX + "seckill:compensated:";
+    /** 秒杀补偿幂等闸门 key 前缀；仅由 seckillCompensatedKey 组装 */
+    private static final String SECKILL_COMPENSATED_PREFIX = CACHE_PREFIX + "seckill:compensated:";
+
+    /**
+     * 秒杀补偿幂等闸门 key：与活动库存、已购和结果 key 使用同一 hash tag，
+     * 让闸门和回补状态可以由同一段 Lua 原子更新。
+     */
+    public static String seckillCompensatedKey(Long activityId, String orderNo) {
+        return SECKILL_COMPENSATED_PREFIX + "{act:" + activityId + "}" + orderNo;
+    }
     /** 秒杀延迟待补偿 ZSET：member = activityId|userId|quantity|orderNo，score = 可补偿时间戳(ms) */
     public static final String SECKILL_COMPENSATE_PENDING_KEY = CACHE_PREFIX + "seckill:compensate:pending";
 
@@ -346,6 +361,15 @@ public final class Constants {
     public static final int SECKILL_RESULT_QUEUING = 0;
     /** 秒杀下单：成功（返回 orderNo） */
     public static final int SECKILL_RESULT_SUCCESS = 1;
+    /** 秒杀下单：消费者建单或发送最终失败 */
+    public static final int SECKILL_RESULT_FAILED = 2;
+    /** 秒杀结果查询：没有抢购记录 */
+    public static final int SECKILL_RESULT_NONE = 3;
+    /** Redis 结果 hash 中的协议值；Lua 通过 JSON_VALUE 常量参数写入。 */
+    public static final String SECKILL_RESULT_QUEUING_VALUE = "QUEUING";
+    public static final String SECKILL_RESULT_FAILED_VALUE = "FAILED";
+    public static final String SECKILL_RESULT_QUEUING_JSON = "\"QUEUING\"";
+    public static final String SECKILL_RESULT_FAILED_JSON = "\"FAILED\"";
 
     // ==================== 订单来源 ====================
     /** 普通订单 */

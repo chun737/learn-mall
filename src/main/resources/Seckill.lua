@@ -3,17 +3,22 @@
 --- 秒杀原子预扣脚本
 --- KEYS[1] = seckill:{act:{id}}:stock    库存计数（string，须预先 SET totalStock）
 --- KEYS[2] = seckill:{act:{id}}:bought   已购数量（hash，field=userId，value=已购件数）
+--- KEYS[3] = mall:seckill:result:{act:{id}}  抢购结果（hash，field=userId）
 --- ARGV[1] = userId
 --- ARGV[2] = 本次购买数量
 --- ARGV[3] = perLimit 每人限购数量
+--- ARGV[4] = stock/bought/result key 的兜底 TTL（秒）
+--- ARGV[5] = JSON 编码的排队状态值（由 Java 常量传入）
 --- 返回：1=成功  -1=库存不足  -2=超限购  -3=参数非法
 ---
 local stock = tonumber(redis.call("GET", KEYS[1]))
 local buy = tonumber(ARGV[2])
 local perLimit = tonumber(ARGV[3])
+local keyTtl = tonumber(ARGV[4])
+local queuingValue = ARGV[5]
 
 -- 参数校验：数量必须为正整数，限购至少为 1，防止 DECRBY 负数刷库存
-if buy == nil or buy <= 0 or perLimit == nil or perLimit <= 0 then
+if buy == nil or buy <= 0 or perLimit == nil or perLimit <= 0 or keyTtl == nil or keyTtl <= 0 or queuingValue == nil then
     return -3
 end
 
@@ -33,4 +38,11 @@ end
 
 redis.call("DECRBY", KEYS[1], buy)
 redis.call("HINCRBY", KEYS[2], ARGV[1], buy)
+if redis.call("TTL", KEYS[2]) < 0 then
+    redis.call("EXPIRE", KEYS[2], keyTtl)
+end
+redis.call("HSET", KEYS[3], ARGV[1], queuingValue)
+if redis.call("TTL", KEYS[3]) < 0 then
+    redis.call("EXPIRE", KEYS[3], keyTtl)
+end
 return 1
