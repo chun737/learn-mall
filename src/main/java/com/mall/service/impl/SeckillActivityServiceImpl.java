@@ -207,8 +207,6 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         Duration seckillKeyTtl = Constants.seckillKeyTtl(activity.getEndTime());
         // ARGV 必须走字符串序列化：默认的 GenericJackson2JsonRedisSerializer 会把 Java 的 String
         // 写成带双引号的 JSON 字符串（"1"），Lua 端 tonumber('"1"') 返回 nil。
-        // 注意原因不是 @class / 类型信息：Integer、Long、String 都是 final 类，
-        // DefaultTyping.NON_FINAL 不会给它们写类型信息（实测序列化 Integer 1 得到的就是 1）。
         Long result = redisTemplate.execute(
                 SECKILL_SCRIPT,
                 RedisSerializer.string(),

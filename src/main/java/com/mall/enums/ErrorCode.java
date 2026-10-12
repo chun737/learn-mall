@@ -49,7 +49,12 @@ public enum ErrorCode {
     SECKILL_SOLD_OUT(42103, "秒杀库存不足"),
     SECKILL_LIMIT_REACHED(42104, "已达限购数量"),
     SECKILL_DUPLICATE(42105, "重复提交，请求处理中"),
-    SECKILL_COUPON_NOT_SUPPORTED(42106, "秒杀订单暂不支持优惠券");
+    SECKILL_COUPON_NOT_SUPPORTED(42106, "秒杀订单暂不支持优惠券"),
+
+    // AI（43xxx 视觉搜索/导购 Agent）
+    AI_IMAGE_INVALID(43001, "图片无效或格式不支持"),
+    AI_RECOGNIZE_FAILED(43002, "图片识别失败，请稍后重试"),
+    AI_RATE_LIMIT(43003, "操作太频繁，请稍后再试");
 
     private final int code;
     private final String message;

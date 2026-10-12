@@ -29,6 +29,20 @@
     <properties>
         <java.version>17</java.version>
     </properties>
+
+    <!-- Spring AI 版本管理：1.0 GA（2025-05-20 发布），面向 Boot 3.4/3.5，只管版本不含依赖 -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>1.0.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -150,6 +164,13 @@
             </exclusions>
         </dependency>
 
+        <!-- Spring AI（OpenAI 兼容协议）：视觉 Agent 拍照搜同款。
+             通过阿里云百炼 DashScope 的 OpenAI 兼容模式接入 qwen-vl 系列视觉模型，
+             换供应商只需改 yaml 的 base-url / api-key / model，代码不动 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
 
     </dependencies>
 
